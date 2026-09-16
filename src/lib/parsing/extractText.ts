@@ -4,6 +4,8 @@ import { SUPPORTED_MIME_TYPES, type SupportedMimeType } from "@/lib/schemas/mime
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 export const MAX_EXTRACTED_CHARS = 120_000;
+/** Combined character ceiling for routes (like compare) that hold two documents in one prompt. */
+export const MAX_COMBINED_CHARS = 200_000;
 
 export type ExtractTextErrorCode =
   | "unsupported_mime"

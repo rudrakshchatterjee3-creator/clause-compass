@@ -10,12 +10,13 @@ import { SummaryCard } from "@/components/SummaryCard";
 import { ClauseList } from "@/components/ClauseList";
 import { DocumentPane } from "@/components/DocumentPane";
 import { AskPanel } from "@/components/AskPanel";
+import { ComparePanel } from "@/components/ComparePanel";
 import { TabList, tabButtonId, tabPanelId, type TabItem } from "@/components/Tabs";
 import { StubPanel } from "@/components/StubPanel";
 import type { ApiErrorInfo, AskTurn } from "@/components/askTypes";
 import type { AskStreamEvent } from "@/lib/schemas/api";
 import { parseNdjsonStream } from "@/lib/streaming/ndjson";
-import type { Analysis, ClauseType, RiskLevel } from "@/lib/schemas";
+import type { Analysis, ClauseType, Comparison, RiskLevel } from "@/lib/schemas";
 
 type TabId = "clauses" | "ask" | "compare" | "brief";
 
@@ -41,6 +42,12 @@ interface AppState {
   askTurns: AskTurn[];
   askQuestion: string;
   askSelectedStepId: string | null;
+  compareStatus: "idle" | "loading" | "success" | "error";
+  compareComparison: Comparison | null;
+  compareDocBLabel: string | null;
+  compareError: ApiErrorInfo | null;
+  compareOnlyChanges: boolean;
+  compareLastRequest: { file?: File; baselineId?: string; label: string } | null;
 }
 
 type AppAction =
@@ -57,7 +64,12 @@ type AppAction =
   | { type: "ASK_CHUNK"; id: string; text: string }
   | { type: "ASK_RESULT"; id: string; result: AskTurn["result"] }
   | { type: "ASK_ERROR"; id: string; error: ApiErrorInfo }
-  | { type: "ASK_SELECT_STEP"; id: string };
+  | { type: "ASK_SELECT_STEP"; id: string }
+  | { type: "COMPARE_START"; request: { file?: File; baselineId?: string; label: string } }
+  | { type: "COMPARE_SUCCESS"; comparison: Comparison }
+  | { type: "COMPARE_ERROR"; error: ApiErrorInfo }
+  | { type: "COMPARE_TOGGLE_ONLY_CHANGES" }
+  | { type: "COMPARE_RESET" };
 
 const initialState: AppState = {
   status: "idle",
@@ -72,6 +84,12 @@ const initialState: AppState = {
   askTurns: [],
   askQuestion: "",
   askSelectedStepId: null,
+  compareStatus: "idle",
+  compareComparison: null,
+  compareDocBLabel: null,
+  compareError: null,
+  compareOnlyChanges: false,
+  compareLastRequest: null,
 };
 
 function reducer(state: AppState, action: AppAction): AppState {
@@ -142,6 +160,33 @@ function reducer(state: AppState, action: AppAction): AppState {
       };
     case "ASK_SELECT_STEP":
       return { ...state, askSelectedStepId: action.id };
+    case "COMPARE_START":
+      return {
+        ...state,
+        compareStatus: "loading",
+        compareError: null,
+        compareLastRequest: action.request,
+      };
+    case "COMPARE_SUCCESS":
+      return {
+        ...state,
+        compareStatus: "success",
+        compareComparison: action.comparison,
+        compareDocBLabel: state.compareLastRequest?.label ?? null,
+      };
+    case "COMPARE_ERROR":
+      return { ...state, compareStatus: "error", compareError: action.error };
+    case "COMPARE_TOGGLE_ONLY_CHANGES":
+      return { ...state, compareOnlyChanges: !state.compareOnlyChanges };
+    case "COMPARE_RESET":
+      return {
+        ...state,
+        compareStatus: "idle",
+        compareComparison: null,
+        compareDocBLabel: null,
+        compareError: null,
+        compareLastRequest: null,
+      };
     default:
       return state;
   }
@@ -234,6 +279,47 @@ async function submitQuestion(
   }
 }
 
+async function submitCompare(
+  params: { documentTextA: string; file?: File; baselineId?: string; label: string },
+  dispatch: Dispatch<AppAction>,
+) {
+  dispatch({
+    type: "COMPARE_START",
+    request: { file: params.file, baselineId: params.baselineId, label: params.label },
+  });
+
+  const formData = new FormData();
+  formData.append("documentTextA", params.documentTextA);
+  if (params.baselineId) formData.append("baselineId", params.baselineId);
+  if (params.file) formData.append("fileB", params.file);
+
+  try {
+    const response = await fetch("/api/compare", { method: "POST", body: formData });
+    const body = await response.json();
+
+    if (!response.ok) {
+      dispatch({
+        type: "COMPARE_ERROR",
+        error: body?.error ?? {
+          code: "unknown",
+          message: "Something went wrong. Please try again.",
+        },
+      });
+      return;
+    }
+
+    dispatch({ type: "COMPARE_SUCCESS", comparison: body.comparison });
+  } catch {
+    dispatch({
+      type: "COMPARE_ERROR",
+      error: {
+        code: "network_error",
+        message: "Could not reach the server. Check your connection and try again.",
+      },
+    });
+  }
+}
+
 export default function Home() {
   const [state, dispatch] = useReducer(reducer, initialState);
 
@@ -271,6 +357,45 @@ export default function Home() {
 
   const handleSelectStep = useCallback(
     (id: string) => dispatch({ type: "ASK_SELECT_STEP", id }),
+    [],
+  );
+
+  const handleComparePickFile = useCallback(
+    (file: File) => {
+      if (!state.documentText) return;
+      void submitCompare(
+        { documentTextA: state.documentText, file, label: file.name },
+        dispatch,
+      );
+    },
+    [state.documentText],
+  );
+
+  const handleComparePickBaseline = useCallback(
+    (baselineId: string, label: string) => {
+      if (!state.documentText) return;
+      void submitCompare({ documentTextA: state.documentText, baselineId, label }, dispatch);
+    },
+    [state.documentText],
+  );
+
+  const handleCompareRetry = useCallback(() => {
+    if (!state.documentText || !state.compareLastRequest) return;
+    void submitCompare(
+      {
+        documentTextA: state.documentText,
+        file: state.compareLastRequest.file,
+        baselineId: state.compareLastRequest.baselineId,
+        label: state.compareLastRequest.label,
+      },
+      dispatch,
+    );
+  }, [state.documentText, state.compareLastRequest]);
+
+  const handleCompareReset = useCallback(() => dispatch({ type: "COMPARE_RESET" }), []);
+
+  const handleCompareToggleOnlyChanges = useCallback(
+    () => dispatch({ type: "COMPARE_TOGGLE_ONLY_CHANGES" }),
     [],
   );
 
@@ -380,9 +505,17 @@ export default function Home() {
                 tabIndex={0}
                 className="pt-6"
               >
-                <StubPanel
-                  title="Compare isn't built yet"
-                  description="Soon you'll be able to compare this document against a second one or a fair baseline."
+                <ComparePanel
+                  status={state.compareStatus}
+                  comparison={state.compareComparison}
+                  docBLabel={state.compareDocBLabel}
+                  error={state.compareError}
+                  onlyChanges={state.compareOnlyChanges}
+                  onToggleOnlyChanges={handleCompareToggleOnlyChanges}
+                  onPickFile={handleComparePickFile}
+                  onPickBaseline={handleComparePickBaseline}
+                  onRetry={handleCompareRetry}
+                  onReset={handleCompareReset}
                 />
               </div>
 

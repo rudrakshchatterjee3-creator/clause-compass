@@ -51,20 +51,24 @@ describe("askRequestSchema", () => {
 describe("compareRequestSchema", () => {
   const documentTextA = "Document A text.";
 
-  it("accepts a request with a second document", () => {
-    expect(() =>
-      compareRequestSchema.parse({ documentTextA, documentTextB: "Document B text." }),
-    ).not.toThrow();
+  it("accepts documentTextA alone (fileB is validated separately by the route)", () => {
+    expect(() => compareRequestSchema.parse({ documentTextA })).not.toThrow();
   });
 
-  it("accepts a request with a baseline id instead of a second document", () => {
+  it("accepts a request with a baseline id", () => {
     expect(() =>
       compareRequestSchema.parse({ documentTextA, baselineId: "rent-baseline" }),
     ).not.toThrow();
   });
 
-  it("rejects a request with neither a second document nor a baseline id", () => {
-    expect(() => compareRequestSchema.parse({ documentTextA })).toThrow();
+  it("rejects an empty documentTextA", () => {
+    expect(() => compareRequestSchema.parse({ documentTextA: "" })).toThrow();
+  });
+
+  it("rejects documentTextA over 120,000 characters", () => {
+    expect(() =>
+      compareRequestSchema.parse({ documentTextA: "a".repeat(120_001) }),
+    ).toThrow();
   });
 });
 

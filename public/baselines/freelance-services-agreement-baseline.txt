@@ -1,0 +1,54 @@
+FREELANCE SERVICES AGREEMENT
+
+This Freelance Services Agreement ("Agreement") is made as of April 10, 2026, between
+Northstar Digital Inc. ("Client") and Priya Nakamura, an independent contractor ("Contractor"),
+for the design and development of Client's marketing website (the "Project").
+
+1. SCOPE OF WORK. Contractor will design and build a marketing website for Client, including
+up to five (5) pages, as described in the attached Statement of Work.
+
+2. REVISIONS. Contractor will provide up to two (2) rounds of revisions to the Project at no
+additional cost. Further revisions will be billed at Contractor's standard hourly rate.
+
+3. FEES AND PAYMENT. Client shall pay Contractor a total fee of $6,000.00 for the Project.
+Payment is due within fifteen (15) days of Contractor's invoice. Invoices unpaid after 30 days
+accrue interest at 1.5% per month.
+
+4. INTELLECTUAL PROPERTY. Work product created by Contractor specifically for this Project,
+excluding any pre-existing tools, code libraries, or design templates Contractor owned before
+this engagement, becomes the property of Client upon full payment. Contractor retains
+ownership of any pre-existing materials and grants Client a license to use them as part of the
+delivered Project.
+
+5. INDEPENDENT CONTRACTOR STATUS. Contractor is an independent contractor and not an
+employee of Client. Contractor is responsible for all applicable taxes.
+
+6. TERMINATION. Either party may terminate this Agreement with 14 days' written notice. Upon
+termination, Client shall pay Contractor for all work completed and approved through the
+termination date, plus a kill fee of 20% of the remaining contract value.
+
+7. CONFIDENTIALITY. Contractor agrees to keep confidential all non-public information about
+Client's business disclosed during the Project, and shall not disclose such information to any
+third party during or after the term of this Agreement.
+
+8. NON-COMPETE. During the term of this Agreement, Contractor shall not accept a directly
+competing project from a business Client has identified in writing as a direct competitor.
+This restriction ends when the Agreement ends.
+
+9. LIABILITY. Contractor's total liability under this Agreement, whether in contract, tort, or
+otherwise, shall not exceed the total fees paid by Client under this Agreement.
+
+10. WARRANTY. Contractor warrants that the Project will be free of material defects for sixty
+(60) days following final delivery. Contractor will correct any such defects at no additional
+cost within this period.
+
+11. INDEPENDENT WORK PRODUCT. Nothing in this Agreement restricts Contractor's ability to
+develop general skills, knowledge, and experience gained while performing the Project.
+
+12. GOVERNING LAW. This Agreement is governed by the laws of the state in which Client's
+principal office is located.
+
+By signing below, the parties agree to the terms above.
+
+Client: Northstar Digital Inc.
+Contractor: Priya Nakamura

@@ -52,15 +52,18 @@ export const askStreamEventSchema = z.discriminatedUnion("type", [
 ]);
 export type AskStreamEvent = z.infer<typeof askStreamEventSchema>;
 
-export const compareRequestSchema = z
-  .object({
-    documentTextA: z.string().min(1).max(120_000),
-    documentTextB: z.string().min(1).max(120_000).optional(),
-    baselineId: z.string().min(1).optional(),
-  })
-  .refine((data) => Boolean(data.documentTextB) || Boolean(data.baselineId), {
-    message: "Provide either documentTextB or baselineId",
-  });
+/**
+ * POST /api/compare accepts multipart/form-data: a "documentTextA" text
+ * field (already extracted, from the original analyze step) plus either a
+ * "fileB" file field (a second document to extract and compare) or a
+ * "baselineId" text field naming a bundled fair-baseline template. This
+ * schema validates the text fields only; fileB is validated separately,
+ * the same way analyzeRequestSchema validates an upload's metadata.
+ */
+export const compareRequestSchema = z.object({
+  documentTextA: z.string().min(1).max(120_000),
+  baselineId: z.string().min(1).optional(),
+});
 export type CompareRequest = z.infer<typeof compareRequestSchema>;
 
 export const briefRequestSchema = z.object({
