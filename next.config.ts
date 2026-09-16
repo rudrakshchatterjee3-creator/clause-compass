@@ -1,10 +1,8 @@
 import type { NextConfig } from "next";
 
+// Content-Security-Policy is set per-request (with a nonce) in src/middleware.ts instead,
+// since Next.js needs a nonce to allow its own inline hydration scripts under a strict CSP.
 const securityHeaders = [
-  {
-    key: "Content-Security-Policy",
-    value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';",
-  },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   {

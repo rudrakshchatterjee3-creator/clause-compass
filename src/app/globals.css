@@ -1,26 +1,106 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --paper-ink: #1b2430;
+  --paper-ink-soft: #4b5563;
+  --paper-bg: #faf7f0;
+  --paper-raised: #ffffff;
+  --paper-line: #e4dcc8;
+  --paper-harbor: #1f4b5e;
+  --paper-harbor-soft: #e7eef0;
+  --paper-brass: #b08d57;
+  --paper-brass-soft: #f3ead9;
+  --paper-risk-low: #3f7d58;
+  --paper-risk-low-bg: #e7f1ea;
+  --paper-risk-medium: #b8792b;
+  --paper-risk-medium-bg: #fbf0e1;
+  --paper-risk-high: #a13d34;
+  --paper-risk-high-bg: #f8e8e6;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-ink: var(--paper-ink);
+  --color-ink-soft: var(--paper-ink-soft);
+  --color-paper: var(--paper-bg);
+  --color-paper-raised: var(--paper-raised);
+  --color-line: var(--paper-line);
+  --color-harbor: var(--paper-harbor);
+  --color-harbor-soft: var(--paper-harbor-soft);
+  --color-brass: var(--paper-brass);
+  --color-brass-soft: var(--paper-brass-soft);
+  --color-risk-low: var(--paper-risk-low);
+  --color-risk-low-bg: var(--paper-risk-low-bg);
+  --color-risk-medium: var(--paper-risk-medium);
+  --color-risk-medium-bg: var(--paper-risk-medium-bg);
+  --color-risk-high: var(--paper-risk-high);
+  --color-risk-high-bg: var(--paper-risk-high-bg);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-display: var(--font-fraunces);
+  --font-body: var(--font-plex-sans);
+  --font-mono: var(--font-plex-mono);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper-bg);
+  color: var(--paper-ink);
+}
+
+::selection {
+  background: var(--paper-brass-soft);
+  color: var(--paper-ink);
+}
+
+*:focus-visible {
+  outline: 2px solid var(--paper-harbor);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.sr-only-focusable:not(:focus) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+mark[data-clause-quote] {
+  background: var(--paper-brass-soft);
+  color: inherit;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--paper-brass) 35%, transparent);
+  cursor: pointer;
+  scroll-margin-block: 5rem;
+  transition: background-color 150ms ease;
+}
+
+mark[data-clause-quote]:hover {
+  background: var(--paper-brass);
+  color: var(--paper-raised);
+}
+
+mark[data-clause-quote][data-selected="true"] {
+  background: var(--paper-harbor);
+  color: var(--paper-raised);
+  box-shadow: 0 0 0 1px var(--paper-harbor);
+}
+
+@keyframes compass-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
