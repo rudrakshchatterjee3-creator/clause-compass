@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   analyzeRequestSchema,
   askRequestSchema,
+  askStreamEventSchema,
   compareRequestSchema,
   briefRequestSchema,
   apiErrorSchema,
@@ -96,5 +97,35 @@ describe("apiErrorSchema", () => {
 
   it("rejects a bare error string", () => {
     expect(() => apiErrorSchema.parse({ error: "oops" })).toThrow();
+  });
+});
+
+describe("askStreamEventSchema", () => {
+  it("accepts an answer_chunk event", () => {
+    const event = { type: "answer_chunk", text: "Hello" };
+    expect(askStreamEventSchema.parse(event)).toEqual(event);
+  });
+
+  it("accepts a result event carrying a full AskAnswer", () => {
+    const event = {
+      type: "result",
+      result: {
+        answerable: true,
+        answer: "x",
+        steps: [],
+        confidence: "low",
+        suggestLawyer: false,
+      },
+    };
+    expect(() => askStreamEventSchema.parse(event)).not.toThrow();
+  });
+
+  it("accepts an error event", () => {
+    const event = { type: "error", error: { code: "request_failed", message: "x" } };
+    expect(() => askStreamEventSchema.parse(event)).not.toThrow();
+  });
+
+  it("rejects an unknown event type", () => {
+    expect(() => askStreamEventSchema.parse({ type: "unknown" })).toThrow();
   });
 });

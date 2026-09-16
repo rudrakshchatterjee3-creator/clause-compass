@@ -1,30 +1,36 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import type { Clause } from "@/lib/schemas";
+
+export interface HighlightSpan {
+  id: string;
+  start?: number;
+  end?: number;
+  verified: boolean;
+}
 
 interface Segment {
   text: string;
-  clauseId?: string;
+  spanId?: string;
 }
 
-function buildSegments(text: string, clauses: Clause[]): Segment[] {
-  const spans = clauses
+function buildSegments(text: string, spans: HighlightSpan[]): Segment[] {
+  const located = spans
     .filter(
-      (clause): clause is Clause & { start: number; end: number } =>
-        clause.verified && clause.start !== undefined && clause.end !== undefined,
+      (span): span is HighlightSpan & { start: number; end: number } =>
+        span.verified && span.start !== undefined && span.end !== undefined,
     )
     .sort((a, b) => a.start - b.start);
 
   const segments: Segment[] = [];
   let cursor = 0;
 
-  for (const clause of spans) {
-    const start = Math.max(clause.start, cursor);
-    const end = clause.end;
+  for (const span of located) {
+    const start = Math.max(span.start, cursor);
+    const end = span.end;
     if (end <= start) continue;
     if (start > cursor) segments.push({ text: text.slice(cursor, start) });
-    segments.push({ text: text.slice(start, end), clauseId: clause.id });
+    segments.push({ text: text.slice(start, end), spanId: span.id });
     cursor = end;
   }
 
@@ -35,27 +41,25 @@ function buildSegments(text: string, clauses: Clause[]): Segment[] {
 
 interface DocumentPaneProps {
   text: string;
-  clauses: Clause[];
-  selectedClauseId: string | null;
+  spans: HighlightSpan[];
+  selectedId: string | null;
   onSelect: (id: string) => void;
 }
 
-export function DocumentPane({ text, clauses, selectedClauseId, onSelect }: DocumentPaneProps) {
+export function DocumentPane({ text, spans, selectedId, onSelect }: DocumentPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const segments = useMemo(() => buildSegments(text, clauses), [text, clauses]);
+  const segments = useMemo(() => buildSegments(text, spans), [text, spans]);
 
   useEffect(() => {
-    if (!selectedClauseId || !containerRef.current) return;
-    const el = containerRef.current.querySelector<HTMLElement>(
-      `[data-clause-id="${selectedClauseId}"]`,
-    );
+    if (!selectedId || !containerRef.current) return;
+    const el = containerRef.current.querySelector<HTMLElement>(`[data-span-id="${selectedId}"]`);
     el?.scrollIntoView({
       behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
         ? "auto"
         : "smooth",
       block: "center",
     });
-  }, [selectedClauseId]);
+  }, [selectedId]);
 
   return (
     <div
@@ -63,20 +67,20 @@ export function DocumentPane({ text, clauses, selectedClauseId, onSelect }: Docu
       className="max-h-[70vh] overflow-y-auto rounded-xl border border-line bg-paper-raised p-5 font-mono text-sm leading-relaxed whitespace-pre-wrap break-words text-ink"
     >
       {segments.map((segment, index) =>
-        segment.clauseId ? (
+        segment.spanId ? (
           <mark
             key={index}
-            data-clause-quote="true"
-            data-clause-id={segment.clauseId}
-            data-selected={segment.clauseId === selectedClauseId}
+            data-quote-span="true"
+            data-span-id={segment.spanId}
+            data-selected={segment.spanId === selectedId}
             tabIndex={0}
             role="button"
-            aria-pressed={segment.clauseId === selectedClauseId}
-            onClick={() => onSelect(segment.clauseId as string)}
+            aria-pressed={segment.spanId === selectedId}
+            onClick={() => onSelect(segment.spanId as string)}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                onSelect(segment.clauseId as string);
+                onSelect(segment.spanId as string);
               }
             }}
           >

@@ -68,7 +68,7 @@ body {
   border: 0;
 }
 
-mark[data-clause-quote] {
+mark[data-quote-span] {
   background: var(--paper-brass-soft);
   color: inherit;
   border-radius: 2px;
@@ -78,12 +78,12 @@ mark[data-clause-quote] {
   transition: background-color 150ms ease;
 }
 
-mark[data-clause-quote]:hover {
+mark[data-quote-span]:hover {
   background: var(--paper-brass);
   color: var(--paper-raised);
 }
 
-mark[data-clause-quote][data-selected="true"] {
+mark[data-quote-span][data-selected="true"] {
   background: var(--paper-harbor);
   color: var(--paper-raised);
   box-shadow: 0 0 0 1px var(--paper-harbor);

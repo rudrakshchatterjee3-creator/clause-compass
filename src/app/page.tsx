@@ -9,8 +9,12 @@ import { ErrorState } from "@/components/ErrorState";
 import { SummaryCard } from "@/components/SummaryCard";
 import { ClauseList } from "@/components/ClauseList";
 import { DocumentPane } from "@/components/DocumentPane";
+import { AskPanel } from "@/components/AskPanel";
 import { TabList, tabButtonId, tabPanelId, type TabItem } from "@/components/Tabs";
 import { StubPanel } from "@/components/StubPanel";
+import type { ApiErrorInfo, AskTurn } from "@/components/askTypes";
+import type { AskStreamEvent } from "@/lib/schemas/api";
+import { parseNdjsonStream } from "@/lib/streaming/ndjson";
 import type { Analysis, ClauseType, RiskLevel } from "@/lib/schemas";
 
 type TabId = "clauses" | "ask" | "compare" | "brief";
@@ -22,10 +26,7 @@ const TABS: TabItem[] = [
   { id: "brief", label: "Brief" },
 ];
 
-interface ApiErrorInfo {
-  code: string;
-  message: string;
-}
+const MAX_ASK_HISTORY_TURNS = 4;
 
 interface AppState {
   status: "idle" | "loading" | "success" | "error";
@@ -37,6 +38,9 @@ interface AppState {
   riskFilter: RiskLevel | "all";
   typeFilter: ClauseType | "all";
   lastFile: File | null;
+  askTurns: AskTurn[];
+  askQuestion: string;
+  askSelectedStepId: string | null;
 }
 
 type AppAction =
@@ -47,7 +51,13 @@ type AppAction =
   | { type: "SELECT_CLAUSE"; id: string }
   | { type: "SET_TAB"; tab: TabId }
   | { type: "SET_RISK_FILTER"; value: RiskLevel | "all" }
-  | { type: "SET_TYPE_FILTER"; value: ClauseType | "all" };
+  | { type: "SET_TYPE_FILTER"; value: ClauseType | "all" }
+  | { type: "ASK_SET_QUESTION"; value: string }
+  | { type: "ASK_SUBMIT"; id: string; question: string }
+  | { type: "ASK_CHUNK"; id: string; text: string }
+  | { type: "ASK_RESULT"; id: string; result: AskTurn["result"] }
+  | { type: "ASK_ERROR"; id: string; error: ApiErrorInfo }
+  | { type: "ASK_SELECT_STEP"; id: string };
 
 const initialState: AppState = {
   status: "idle",
@@ -59,6 +69,9 @@ const initialState: AppState = {
   riskFilter: "all",
   typeFilter: "all",
   lastFile: null,
+  askTurns: [],
+  askQuestion: "",
+  askSelectedStepId: null,
 };
 
 function reducer(state: AppState, action: AppAction): AppState {
@@ -87,6 +100,48 @@ function reducer(state: AppState, action: AppAction): AppState {
       return { ...state, riskFilter: action.value };
     case "SET_TYPE_FILTER":
       return { ...state, typeFilter: action.value };
+    case "ASK_SET_QUESTION":
+      return { ...state, askQuestion: action.value };
+    case "ASK_SUBMIT":
+      return {
+        ...state,
+        askQuestion: "",
+        askSelectedStepId: null,
+        askTurns: [
+          ...state.askTurns,
+          {
+            id: action.id,
+            question: action.question,
+            answer: "",
+            result: null,
+            status: "streaming",
+            error: null,
+          },
+        ],
+      };
+    case "ASK_CHUNK":
+      return {
+        ...state,
+        askTurns: state.askTurns.map((turn) =>
+          turn.id === action.id ? { ...turn, answer: turn.answer + action.text } : turn,
+        ),
+      };
+    case "ASK_RESULT":
+      return {
+        ...state,
+        askTurns: state.askTurns.map((turn) =>
+          turn.id === action.id ? { ...turn, result: action.result, status: "done" } : turn,
+        ),
+      };
+    case "ASK_ERROR":
+      return {
+        ...state,
+        askTurns: state.askTurns.map((turn) =>
+          turn.id === action.id ? { ...turn, status: "error", error: action.error } : turn,
+        ),
+      };
+    case "ASK_SELECT_STEP":
+      return { ...state, askSelectedStepId: action.id };
     default:
       return state;
   }
@@ -129,6 +184,56 @@ async function submitFile(file: File, dispatch: Dispatch<AppAction>) {
   }
 }
 
+async function submitQuestion(
+  params: { documentText: string; question: string; history: { question: string; answer: string }[] },
+  dispatch: Dispatch<AppAction>,
+) {
+  const id = crypto.randomUUID();
+  dispatch({ type: "ASK_SUBMIT", id, question: params.question });
+
+  try {
+    const response = await fetch("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        documentText: params.documentText,
+        question: params.question,
+        history: params.history,
+      }),
+    });
+
+    if (!response.ok || !response.body) {
+      const body = await response.json().catch(() => null);
+      dispatch({
+        type: "ASK_ERROR",
+        id,
+        error: body?.error ?? { code: "unknown", message: "Something went wrong. Please try again." },
+      });
+      return;
+    }
+
+    for await (const raw of parseNdjsonStream(response.body)) {
+      const event = raw as AskStreamEvent;
+      if (event.type === "answer_chunk") {
+        dispatch({ type: "ASK_CHUNK", id, text: event.text });
+      } else if (event.type === "result") {
+        dispatch({ type: "ASK_RESULT", id, result: event.result });
+      } else if (event.type === "error") {
+        dispatch({ type: "ASK_ERROR", id, error: event.error });
+      }
+    }
+  } catch {
+    dispatch({
+      type: "ASK_ERROR",
+      id,
+      error: {
+        code: "network_error",
+        message: "Could not reach the server. Check your connection and try again.",
+      },
+    });
+  }
+}
+
 export default function Home() {
   const [state, dispatch] = useReducer(reducer, initialState);
 
@@ -144,6 +249,28 @@ export default function Home() {
 
   const handleSelectClause = useCallback(
     (id: string) => dispatch({ type: "SELECT_CLAUSE", id }),
+    [],
+  );
+
+  const handleAskQuestionChange = useCallback(
+    (value: string) => dispatch({ type: "ASK_SET_QUESTION", value }),
+    [],
+  );
+
+  const handleAskSubmit = useCallback(
+    (question: string) => {
+      if (!state.documentText) return;
+      const history = state.askTurns
+        .filter((turn) => turn.status === "done")
+        .slice(-MAX_ASK_HISTORY_TURNS)
+        .map((turn) => ({ question: turn.question, answer: turn.answer }));
+      void submitQuestion({ documentText: state.documentText, question, history }, dispatch);
+    },
+    [state.documentText, state.askTurns],
+  );
+
+  const handleSelectStep = useCallback(
+    (id: string) => dispatch({ type: "ASK_SELECT_STEP", id }),
     [],
   );
 
@@ -219,8 +346,8 @@ export default function Home() {
                 />
                 <DocumentPane
                   text={state.documentText}
-                  clauses={state.analysis.clauses}
-                  selectedClauseId={state.selectedClauseId}
+                  spans={state.analysis.clauses}
+                  selectedId={state.selectedClauseId}
                   onSelect={handleSelectClause}
                 />
               </div>
@@ -233,9 +360,15 @@ export default function Home() {
                 tabIndex={0}
                 className="pt-6"
               >
-                <StubPanel
-                  title="Ask isn't built yet"
-                  description="Soon you'll be able to ask what happens if you break a clause, and get a cited answer."
+                <AskPanel
+                  documentText={state.documentText}
+                  clauses={state.analysis.clauses}
+                  turns={state.askTurns}
+                  question={state.askQuestion}
+                  onQuestionChange={handleAskQuestionChange}
+                  onSubmit={handleAskSubmit}
+                  selectedStepId={state.askSelectedStepId}
+                  onSelectStep={handleSelectStep}
                 />
               </div>
 

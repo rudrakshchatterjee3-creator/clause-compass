@@ -2,6 +2,7 @@ import { z } from "zod";
 import { clauseSchema } from "./clause";
 import { analysisSchema } from "./analysis";
 import { mimeTypeSchema } from "./mime";
+import { askAnswerSchema } from "./askAnswer";
 
 export const apiErrorSchema = z.object({
   error: z.object({
@@ -25,11 +26,31 @@ export type AnalyzeRequest = z.infer<typeof analyzeRequestSchema>;
 
 export const askRequestSchema = z.object({
   documentText: z.string().min(1).max(120_000),
-  clauses: z.array(clauseSchema),
+  clauses: z.array(clauseSchema).optional(),
   question: z.string().min(1).max(500),
   history: z.array(qaTurnSchema).max(4).optional(),
 });
 export type AskRequest = z.infer<typeof askRequestSchema>;
+
+/**
+ * POST /api/ask streams newline-delimited JSON (application/x-ndjson), one
+ * event object per line:
+ *  - {"type":"answer_chunk","text":"..."} — zero or more, as the plain-
+ *    language answer is generated
+ *  - {"type":"result","result":AskAnswer} — exactly one, always last on
+ *    success: the full answer with server-verified step quotes
+ *  - {"type":"error","error":{"code","message"}} — instead of "result" if
+ *    generation fails after streaming has already started
+ */
+export const askStreamEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("answer_chunk"), text: z.string() }),
+  z.object({ type: z.literal("result"), result: askAnswerSchema }),
+  z.object({
+    type: z.literal("error"),
+    error: z.object({ code: z.string(), message: z.string() }),
+  }),
+]);
+export type AskStreamEvent = z.infer<typeof askStreamEventSchema>;
 
 export const compareRequestSchema = z
   .object({
