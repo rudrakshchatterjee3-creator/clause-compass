@@ -45,3 +45,12 @@ export const clauseSchema = z.object({
   verified: z.boolean(),
 });
 export type Clause = z.infer<typeof clauseSchema>;
+
+/** Shape the model must produce: grounding fields (id/start/end/verified) are computed server-side. */
+export const clauseDraftSchema = clauseSchema.omit({
+  id: true,
+  start: true,
+  end: true,
+  verified: true,
+});
+export type ClauseDraft = z.infer<typeof clauseDraftSchema>;

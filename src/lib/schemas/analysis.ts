@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { clauseSchema } from "./clause";
+import { clauseSchema, clauseDraftSchema } from "./clause";
 
 export const analysisSchema = z.object({
   docTitle: z.string(),
@@ -10,3 +10,9 @@ export const analysisSchema = z.object({
   disclaimer: z.string(),
 });
 export type Analysis = z.infer<typeof analysisSchema>;
+
+/** Shape the model must produce: the disclaimer is fixed server-side, clauses omit grounding fields. */
+export const analysisDraftSchema = analysisSchema
+  .omit({ clauses: true, disclaimer: true })
+  .extend({ clauses: z.array(clauseDraftSchema) });
+export type AnalysisDraft = z.infer<typeof analysisDraftSchema>;
