@@ -152,4 +152,41 @@ describe("POST /api/ask", () => {
     const response = await POST(request);
     expect(response.status).toBe(400);
   });
+
+  it("redacts PII from the prompt by default and emits a redactions event", async () => {
+    generateContentStreamMock.mockResolvedValue(textChunks("An answer."));
+    generateContentMock.mockResolvedValue({
+      text: JSON.stringify({ answerable: true, steps: [], confidence: "low", suggestLawyer: false }),
+    });
+
+    const documentText = `${DOCUMENT_TEXT} Contact jane@example.com.`;
+    const response = await POST(buildRequest({ documentText, question: "q" }));
+    const events = await readEvents(response);
+
+    expect(events[0]).toEqual({
+      type: "redactions",
+      redactions: [{ type: "email", count: 1 }],
+    });
+
+    const streamArgs = generateContentStreamMock.mock.calls[0]![0] as { contents: string };
+    expect(streamArgs.contents).toContain("[REDACTED_EMAIL]");
+    expect(streamArgs.contents).not.toContain("jane@example.com");
+  });
+
+  it("sends the original text when redactPii is explicitly disabled", async () => {
+    generateContentStreamMock.mockResolvedValue(textChunks("An answer."));
+    generateContentMock.mockResolvedValue({
+      text: JSON.stringify({ answerable: true, steps: [], confidence: "low", suggestLawyer: false }),
+    });
+
+    const documentText = `${DOCUMENT_TEXT} Contact jane@example.com.`;
+    const response = await POST(
+      buildRequest({ documentText, question: "q", redactPii: false }),
+    );
+    const events = await readEvents(response);
+
+    expect(events[0]).not.toMatchObject({ type: "redactions" });
+    const streamArgs = generateContentStreamMock.mock.calls[0]![0] as { contents: string };
+    expect(streamArgs.contents).toContain("jane@example.com");
+  });
 });

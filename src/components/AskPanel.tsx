@@ -81,6 +81,7 @@ export function AskPanel({
                 answerText={turn.answer}
                 isStreaming={turn.status === "streaming"}
                 result={turn.result}
+                redactions={turn.redactions}
                 selectedStepId={turn.result === latestResult ? selectedStepId : null}
                 onSelectStep={onSelectStep}
               />

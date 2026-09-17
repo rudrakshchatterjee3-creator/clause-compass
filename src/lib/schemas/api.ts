@@ -18,6 +18,12 @@ export const qaTurnSchema = z.object({
 });
 export type QaTurn = z.infer<typeof qaTurnSchema>;
 
+export const redactionSummarySchema = z.object({
+  type: z.string(),
+  count: z.number().int().nonnegative(),
+});
+export type RedactionSummaryDto = z.infer<typeof redactionSummarySchema>;
+
 export const analyzeRequestSchema = z.object({
   mimeType: mimeTypeSchema,
   size: z.number().int().positive(),
@@ -29,6 +35,7 @@ export const askRequestSchema = z.object({
   clauses: z.array(clauseSchema).optional(),
   question: z.string().min(1).max(500),
   history: z.array(qaTurnSchema).max(4).optional(),
+  redactPii: z.boolean().optional(),
 });
 export type AskRequest = z.infer<typeof askRequestSchema>;
 
@@ -41,6 +48,8 @@ export type AskRequest = z.infer<typeof askRequestSchema>;
  *    success: the full answer with server-verified step quotes
  *  - {"type":"error","error":{"code","message"}} — instead of "result" if
  *    generation fails after streaming has already started
+ *  - {"type":"redactions","redactions":[...]} — at most one, sent before
+ *    any "answer_chunk", only when redactPii found and masked something
  */
 export const askStreamEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("answer_chunk"), text: z.string() }),
@@ -49,6 +58,7 @@ export const askStreamEventSchema = z.discriminatedUnion("type", [
     type: z.literal("error"),
     error: z.object({ code: z.string(), message: z.string() }),
   }),
+  z.object({ type: z.literal("redactions"), redactions: z.array(redactionSummarySchema) }),
 ]);
 export type AskStreamEvent = z.infer<typeof askStreamEventSchema>;
 

@@ -12,8 +12,10 @@ import { DocumentPane } from "@/components/DocumentPane";
 import { AskPanel } from "@/components/AskPanel";
 import { ComparePanel } from "@/components/ComparePanel";
 import { BriefPanel } from "@/components/BriefPanel";
+import { PiiToggle } from "@/components/PiiToggle";
+import { RedactionNotice } from "@/components/RedactionNotice";
 import { TabList, tabButtonId, tabPanelId, type TabItem } from "@/components/Tabs";
-import type { ApiErrorInfo, AskTurn } from "@/components/askTypes";
+import type { ApiErrorInfo, AskTurn, RedactionSummaryDto } from "@/components/askTypes";
 import type { AskStreamEvent } from "@/lib/schemas/api";
 import { parseNdjsonStream } from "@/lib/streaming/ndjson";
 import type { Analysis, Brief, ClauseType, Comparison, RiskLevel } from "@/lib/schemas";
@@ -52,13 +54,22 @@ interface AppState {
   brief: Brief | null;
   briefGeneratedAt: string | null;
   briefError: ApiErrorInfo | null;
+  redactPii: boolean;
+  analysisRedactions: RedactionSummaryDto[];
+  compareRedactions: RedactionSummaryDto[];
 }
 
 type AppAction =
   | { type: "UPLOAD_START"; file: File }
-  | { type: "UPLOAD_SUCCESS"; analysis: Analysis; documentText: string }
+  | {
+      type: "UPLOAD_SUCCESS";
+      analysis: Analysis;
+      documentText: string;
+      redactions: RedactionSummaryDto[];
+    }
   | { type: "UPLOAD_ERROR"; error: ApiErrorInfo }
   | { type: "RESET" }
+  | { type: "SET_REDACT_PII"; value: boolean }
   | { type: "SELECT_CLAUSE"; id: string }
   | { type: "SET_TAB"; tab: TabId }
   | { type: "SET_RISK_FILTER"; value: RiskLevel | "all" }
@@ -68,9 +79,10 @@ type AppAction =
   | { type: "ASK_CHUNK"; id: string; text: string }
   | { type: "ASK_RESULT"; id: string; result: AskTurn["result"] }
   | { type: "ASK_ERROR"; id: string; error: ApiErrorInfo }
+  | { type: "ASK_REDACTIONS"; id: string; redactions: RedactionSummaryDto[] }
   | { type: "ASK_SELECT_STEP"; id: string }
   | { type: "COMPARE_START"; request: { file?: File; baselineId?: string; label: string } }
-  | { type: "COMPARE_SUCCESS"; comparison: Comparison }
+  | { type: "COMPARE_SUCCESS"; comparison: Comparison; redactions: RedactionSummaryDto[] }
   | { type: "COMPARE_ERROR"; error: ApiErrorInfo }
   | { type: "COMPARE_TOGGLE_ONLY_CHANGES" }
   | { type: "COMPARE_RESET" }
@@ -101,18 +113,27 @@ const initialState: AppState = {
   brief: null,
   briefGeneratedAt: null,
   briefError: null,
+  redactPii: true,
+  analysisRedactions: [],
+  compareRedactions: [],
 };
 
 function reducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "UPLOAD_START":
-      return { ...initialState, status: "loading", lastFile: action.file };
+      return {
+        ...initialState,
+        status: "loading",
+        lastFile: action.file,
+        redactPii: state.redactPii,
+      };
     case "UPLOAD_SUCCESS":
       return {
         ...state,
         status: "success",
         analysis: action.analysis,
         documentText: action.documentText,
+        analysisRedactions: action.redactions,
         error: null,
         selectedClauseId: null,
         activeTab: "clauses",
@@ -120,7 +141,9 @@ function reducer(state: AppState, action: AppAction): AppState {
     case "UPLOAD_ERROR":
       return { ...state, status: "error", error: action.error };
     case "RESET":
-      return initialState;
+      return { ...initialState, redactPii: state.redactPii };
+    case "SET_REDACT_PII":
+      return { ...state, redactPii: action.value };
     case "SELECT_CLAUSE":
       return { ...state, selectedClauseId: action.id, activeTab: "clauses" };
     case "SET_TAB":
@@ -145,6 +168,7 @@ function reducer(state: AppState, action: AppAction): AppState {
             result: null,
             status: "streaming",
             error: null,
+            redactions: [],
           },
         ],
       };
@@ -169,6 +193,13 @@ function reducer(state: AppState, action: AppAction): AppState {
           turn.id === action.id ? { ...turn, status: "error", error: action.error } : turn,
         ),
       };
+    case "ASK_REDACTIONS":
+      return {
+        ...state,
+        askTurns: state.askTurns.map((turn) =>
+          turn.id === action.id ? { ...turn, redactions: action.redactions } : turn,
+        ),
+      };
     case "ASK_SELECT_STEP":
       return { ...state, askSelectedStepId: action.id };
     case "COMPARE_START":
@@ -183,6 +214,7 @@ function reducer(state: AppState, action: AppAction): AppState {
         ...state,
         compareStatus: "success",
         compareComparison: action.comparison,
+        compareRedactions: action.redactions,
         compareDocBLabel: state.compareLastRequest?.label ?? null,
       };
     case "COMPARE_ERROR":
@@ -197,6 +229,7 @@ function reducer(state: AppState, action: AppAction): AppState {
         compareDocBLabel: null,
         compareError: null,
         compareLastRequest: null,
+        compareRedactions: [],
       };
     case "BRIEF_START":
       return { ...state, briefStatus: "loading", briefError: null };
@@ -214,11 +247,12 @@ function reducer(state: AppState, action: AppAction): AppState {
   }
 }
 
-async function submitFile(file: File, dispatch: Dispatch<AppAction>) {
+async function submitFile(file: File, redactPii: boolean, dispatch: Dispatch<AppAction>) {
   dispatch({ type: "UPLOAD_START", file });
 
   const formData = new FormData();
   formData.append("file", file);
+  if (!redactPii) formData.append("redactPii", "false");
 
   try {
     const response = await fetch("/api/analyze", { method: "POST", body: formData });
@@ -239,6 +273,7 @@ async function submitFile(file: File, dispatch: Dispatch<AppAction>) {
       type: "UPLOAD_SUCCESS",
       analysis: body.analysis,
       documentText: body.documentText,
+      redactions: body.redactions ?? [],
     });
   } catch {
     dispatch({
@@ -252,7 +287,12 @@ async function submitFile(file: File, dispatch: Dispatch<AppAction>) {
 }
 
 async function submitQuestion(
-  params: { documentText: string; question: string; history: { question: string; answer: string }[] },
+  params: {
+    documentText: string;
+    question: string;
+    history: { question: string; answer: string }[];
+    redactPii: boolean;
+  },
   dispatch: Dispatch<AppAction>,
 ) {
   const id = crypto.randomUUID();
@@ -266,6 +306,7 @@ async function submitQuestion(
         documentText: params.documentText,
         question: params.question,
         history: params.history,
+        redactPii: params.redactPii,
       }),
     });
 
@@ -287,6 +328,8 @@ async function submitQuestion(
         dispatch({ type: "ASK_RESULT", id, result: event.result });
       } else if (event.type === "error") {
         dispatch({ type: "ASK_ERROR", id, error: event.error });
+      } else if (event.type === "redactions") {
+        dispatch({ type: "ASK_REDACTIONS", id, redactions: event.redactions });
       }
     }
   } catch {
@@ -302,7 +345,13 @@ async function submitQuestion(
 }
 
 async function submitCompare(
-  params: { documentTextA: string; file?: File; baselineId?: string; label: string },
+  params: {
+    documentTextA: string;
+    file?: File;
+    baselineId?: string;
+    label: string;
+    redactPii: boolean;
+  },
   dispatch: Dispatch<AppAction>,
 ) {
   dispatch({
@@ -314,6 +363,7 @@ async function submitCompare(
   formData.append("documentTextA", params.documentTextA);
   if (params.baselineId) formData.append("baselineId", params.baselineId);
   if (params.file) formData.append("fileB", params.file);
+  if (!params.redactPii) formData.append("redactPii", "false");
 
   try {
     const response = await fetch("/api/compare", { method: "POST", body: formData });
@@ -330,7 +380,11 @@ async function submitCompare(
       return;
     }
 
-    dispatch({ type: "COMPARE_SUCCESS", comparison: body.comparison });
+    dispatch({
+      type: "COMPARE_SUCCESS",
+      comparison: body.comparison,
+      redactions: body.redactions ?? [],
+    });
   } catch {
     dispatch({
       type: "COMPARE_ERROR",
@@ -382,15 +436,23 @@ async function submitBrief(
 export default function Home() {
   const [state, dispatch] = useReducer(reducer, initialState);
 
-  const handleFileSelected = useCallback((file: File) => {
-    void submitFile(file, dispatch);
-  }, []);
+  const handleFileSelected = useCallback(
+    (file: File) => {
+      void submitFile(file, state.redactPii, dispatch);
+    },
+    [state.redactPii],
+  );
 
   const handleRetry = useCallback(() => {
-    if (state.lastFile) void submitFile(state.lastFile, dispatch);
-  }, [state.lastFile]);
+    if (state.lastFile) void submitFile(state.lastFile, state.redactPii, dispatch);
+  }, [state.lastFile, state.redactPii]);
 
   const handleStartOver = useCallback(() => dispatch({ type: "RESET" }), []);
+
+  const handleToggleRedactPii = useCallback(
+    (value: boolean) => dispatch({ type: "SET_REDACT_PII", value }),
+    [],
+  );
 
   const handleSelectClause = useCallback(
     (id: string) => dispatch({ type: "SELECT_CLAUSE", id }),
@@ -409,9 +471,12 @@ export default function Home() {
         .filter((turn) => turn.status === "done")
         .slice(-MAX_ASK_HISTORY_TURNS)
         .map((turn) => ({ question: turn.question, answer: turn.answer }));
-      void submitQuestion({ documentText: state.documentText, question, history }, dispatch);
+      void submitQuestion(
+        { documentText: state.documentText, question, history, redactPii: state.redactPii },
+        dispatch,
+      );
     },
-    [state.documentText, state.askTurns],
+    [state.documentText, state.askTurns, state.redactPii],
   );
 
   const handleSelectStep = useCallback(
@@ -423,19 +488,22 @@ export default function Home() {
     (file: File) => {
       if (!state.documentText) return;
       void submitCompare(
-        { documentTextA: state.documentText, file, label: file.name },
+        { documentTextA: state.documentText, file, label: file.name, redactPii: state.redactPii },
         dispatch,
       );
     },
-    [state.documentText],
+    [state.documentText, state.redactPii],
   );
 
   const handleComparePickBaseline = useCallback(
     (baselineId: string, label: string) => {
       if (!state.documentText) return;
-      void submitCompare({ documentTextA: state.documentText, baselineId, label }, dispatch);
+      void submitCompare(
+        { documentTextA: state.documentText, baselineId, label, redactPii: state.redactPii },
+        dispatch,
+      );
     },
-    [state.documentText],
+    [state.documentText, state.redactPii],
   );
 
   const handleCompareRetry = useCallback(() => {
@@ -446,10 +514,11 @@ export default function Home() {
         file: state.compareLastRequest.file,
         baselineId: state.compareLastRequest.baselineId,
         label: state.compareLastRequest.label,
+        redactPii: state.redactPii,
       },
       dispatch,
     );
-  }, [state.documentText, state.compareLastRequest]);
+  }, [state.documentText, state.compareLastRequest, state.redactPii]);
 
   const handleCompareReset = useCallback(() => dispatch({ type: "COMPARE_RESET" }), []);
 
@@ -480,8 +549,9 @@ export default function Home() {
                 Upload a contract and Clause Compass maps every clause: what it means, what it
                 asks of you, and how risky it is — all grounded in quotes from your own document.
               </p>
-              <div className="mt-8 flex justify-center lg:justify-start">
+              <div className="mt-8 flex flex-col items-center lg:items-start">
                 <UploadZone onFileSelected={handleFileSelected} />
+                <PiiToggle checked={state.redactPii} onChange={handleToggleRedactPii} />
               </div>
             </div>
             <div className="hidden lg:block">
@@ -510,6 +580,10 @@ export default function Home() {
               summary={state.analysis.summary}
               missingCommonClauses={state.analysis.missingCommonClauses}
             />
+
+            {state.analysisRedactions.length > 0 && (
+              <RedactionNotice redactions={state.analysisRedactions} />
+            )}
 
             <div>
               <TabList
@@ -576,6 +650,7 @@ export default function Home() {
                   status={state.compareStatus}
                   comparison={state.compareComparison}
                   docBLabel={state.compareDocBLabel}
+                  redactions={state.compareRedactions}
                   error={state.compareError}
                   onlyChanges={state.compareOnlyChanges}
                   onToggleOnlyChanges={handleCompareToggleOnlyChanges}

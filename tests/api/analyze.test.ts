@@ -13,12 +13,18 @@ import { POST } from "@/app/api/analyze/route";
 const DOCUMENT_TEXT = "The tenant shall pay $1,200 rent on the first of each month.";
 
 function buildRequest(
-  options: { fileName?: string; mimeType?: string; content?: string } = {},
+  options: {
+    fileName?: string;
+    mimeType?: string;
+    content?: string;
+    redactPii?: boolean;
+  } = {},
 ): Request {
   const { fileName = "lease.txt", mimeType = "text/plain", content = DOCUMENT_TEXT } = options;
   const formData = new FormData();
   const blob = new Blob([content], { type: mimeType });
   formData.append("file", blob, fileName);
+  if (options.redactPii === false) formData.append("redactPii", "false");
   return new Request("http://localhost/api/analyze", { method: "POST", body: formData });
 }
 
@@ -117,6 +123,35 @@ describe("POST /api/analyze", () => {
     const body = await response.json();
     expect(body.error.code).toBe("invalid_request");
     expect(generateContentMock).not.toHaveBeenCalled();
+  });
+
+  it("redacts PII from the document before sending it to the model, by default", async () => {
+    generateContentMock.mockResolvedValue({ text: JSON.stringify(validDraft()) });
+    const content = `${DOCUMENT_TEXT} Contact jane@example.com. Case: redact-default.`;
+
+    const response = await POST(buildRequest({ content }));
+    expect(response.status).toBe(200);
+
+    const callArgs = generateContentMock.mock.calls[0]![0] as { contents: string };
+    expect(callArgs.contents).toContain("[REDACTED_EMAIL]");
+    expect(callArgs.contents).not.toContain("jane@example.com");
+
+    const body = await response.json();
+    expect(body.documentText).toContain("jane@example.com");
+    expect(body.redactions).toEqual([{ type: "email", count: 1 }]);
+  });
+
+  it("sends the original text when redactPii is explicitly disabled", async () => {
+    generateContentMock.mockResolvedValue({ text: JSON.stringify(validDraft()) });
+    const content = `${DOCUMENT_TEXT} Contact jane@example.com. Case: redact-disabled.`;
+
+    const response = await POST(buildRequest({ content, redactPii: false }));
+
+    const callArgs = generateContentMock.mock.calls[0]![0] as { contents: string };
+    expect(callArgs.contents).toContain("jane@example.com");
+
+    const body = await response.json();
+    expect(body.redactions).toEqual([]);
   });
 
   it("returns 400 when no file is attached", async () => {

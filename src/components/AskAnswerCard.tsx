@@ -1,6 +1,8 @@
 import type { AskAnswer } from "@/lib/schemas";
 import { ConfidenceBadge } from "@/components/ConfidenceBadge";
 import { NotVerifiedBadge } from "@/components/NotVerifiedBadge";
+import { RedactionNotice } from "@/components/RedactionNotice";
+import type { RedactionSummaryDto } from "@/components/askTypes";
 
 export function askStepId(index: number): string {
   return `step-${index}`;
@@ -11,6 +13,7 @@ interface AskAnswerCardProps {
   answerText: string;
   isStreaming: boolean;
   result: AskAnswer | null;
+  redactions: RedactionSummaryDto[];
   selectedStepId: string | null;
   onSelectStep: (id: string) => void;
 }
@@ -20,6 +23,7 @@ export function AskAnswerCard({
   answerText,
   isStreaming,
   result,
+  redactions,
   selectedStepId,
   onSelectStep,
 }: AskAnswerCardProps) {
@@ -29,6 +33,11 @@ export function AskAnswerCard({
       <p className="mt-1 font-display text-base font-medium text-ink">{question}</p>
 
       <div className="mt-4 border-t border-line pt-4">
+        {redactions.length > 0 && (
+          <div className="mb-3">
+            <RedactionNotice redactions={redactions} />
+          </div>
+        )}
         <p className="text-sm leading-relaxed text-ink">
           {answerText}
           {isStreaming && (

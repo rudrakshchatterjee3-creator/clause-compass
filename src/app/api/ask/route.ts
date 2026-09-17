@@ -10,8 +10,24 @@ import {
 } from "@/lib/ai/prompts";
 import { verifyQuoteFields } from "@/lib/grounding/verify";
 import { encodeNdjsonLine, NDJSON_CONTENT_TYPE } from "@/lib/streaming/ndjson";
+import { RateLimiter, getClientIp } from "@/lib/security/rateLimit";
+import { redactPii } from "@/lib/security/redactPii";
+import { logRouteError } from "@/lib/security/logger";
+
+const ROUTE = "ask";
+const rateLimiter = new RateLimiter({ limit: 10, windowMs: 60_000 });
 
 export async function POST(request: Request): Promise<Response> {
+  const rate = rateLimiter.check(getClientIp(request));
+  if (!rate.allowed) {
+    return errorResponse(
+      "rate_limited",
+      "Too many requests. Please wait before trying again.",
+      429,
+      rate.retryAfterSeconds,
+    );
+  }
+
   let body: unknown;
   try {
     body = await request.json();
@@ -28,12 +44,20 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const { documentText, question, history } = parsed.data;
-  const contents = buildAskContents({ documentText, question, history });
+  const { documentText, question, history, redactPii: shouldRedact = true } = parsed.data;
+  const { text: modelDocumentText, redactions } = shouldRedact
+    ? redactPii(documentText)
+    : { text: documentText, redactions: [] };
+  const contents = buildAskContents({ documentText: modelDocumentText, question, history });
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const emit = (event: AskStreamEvent) => controller.enqueue(encodeNdjsonLine(event));
+
+      if (redactions.length > 0) {
+        emit({ type: "redactions", redactions });
+      }
+
       let answer = "";
 
       try {
@@ -68,8 +92,10 @@ export async function POST(request: Request): Promise<Response> {
         emit({ type: "result", result });
       } catch (error) {
         if (error instanceof AiError) {
+          logRouteError({ route: ROUTE, code: error.code, status: aiErrorStatus(error.code) }, error);
           emit({ type: "error", error: { code: error.code, message: error.message } });
         } else {
+          logRouteError({ route: ROUTE, code: "internal_error", status: 500 }, error);
           emit({
             type: "error",
             error: { code: "internal_error", message: "Failed to answer the question" },
@@ -89,6 +115,23 @@ export async function POST(request: Request): Promise<Response> {
   });
 }
 
-function errorResponse(code: string, message: string, status: number): NextResponse<ApiError> {
-  return NextResponse.json({ error: { code, message } }, { status });
+function errorResponse(
+  code: string,
+  message: string,
+  status: number,
+  retryAfterSeconds?: number,
+): NextResponse<ApiError> {
+  const headers =
+    retryAfterSeconds !== undefined ? { "Retry-After": String(retryAfterSeconds) } : undefined;
+  return NextResponse.json({ error: { code, message } }, { status, headers });
+}
+
+function aiErrorStatus(code: AiError["code"]): number {
+  switch (code) {
+    case "timeout":
+      return 504;
+    case "invalid_response":
+    case "request_failed":
+      return 502;
+  }
 }

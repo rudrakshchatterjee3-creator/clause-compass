@@ -9,10 +9,25 @@ import type { Clause } from "@/lib/schemas/clause";
 import { verifyQuoteFields } from "@/lib/grounding/verify";
 import { sha256 } from "@/lib/security/hash";
 import { LruCache } from "@/lib/security/lru";
+import { RateLimiter, getClientIp } from "@/lib/security/rateLimit";
+import { redactPii } from "@/lib/security/redactPii";
+import { logRouteError } from "@/lib/security/logger";
 
+const ROUTE = "analyze";
 const analysisCache = new LruCache<string, Analysis>({ capacity: 50, ttlMs: 30 * 60 * 1000 });
+const rateLimiter = new RateLimiter({ limit: 10, windowMs: 60_000 });
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const rate = rateLimiter.check(getClientIp(request));
+  if (!rate.allowed) {
+    return errorResponse(
+      "rate_limited",
+      "Too many requests. Please wait before trying again.",
+      429,
+      rate.retryAfterSeconds,
+    );
+  }
+
   let formData: FormData;
   try {
     formData = await request.formData();
@@ -43,26 +58,34 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (error instanceof ExtractTextError) {
       return errorResponse(error.code, error.message, extractTextStatus(error.code));
     }
+    logRouteError({ route: ROUTE, code: "internal_error", status: 500 }, error);
     return errorResponse("internal_error", "Failed to read the document", 500);
   }
 
   const hash = sha256(documentText);
   const cached = analysisCache.get(hash);
   if (cached) {
-    return NextResponse.json({ analysis: cached, documentText });
+    return NextResponse.json({ analysis: cached, documentText, redactions: [] });
   }
+
+  const shouldRedact = formData.get("redactPii") !== "false";
+  const { text: modelText, redactions } = shouldRedact
+    ? redactPii(documentText)
+    : { text: documentText, redactions: [] };
 
   let draft;
   try {
     draft = await generateStructured({
       schema: analysisDraftSchema,
-      prompt: wrapDocument(documentText),
+      prompt: wrapDocument(modelText),
       systemInstruction: ANALYZE_SYSTEM_PROMPT,
     });
   } catch (error) {
     if (error instanceof AiError) {
+      logRouteError({ route: ROUTE, code: error.code, status: aiErrorStatus(error.code) }, error);
       return errorResponse(error.code, error.message, aiErrorStatus(error.code));
     }
+    logRouteError({ route: ROUTE, code: "internal_error", status: 500 }, error);
     return errorResponse("internal_error", "Failed to analyze the document", 500);
   }
 
@@ -82,11 +105,18 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   analysisCache.set(hash, analysis);
 
-  return NextResponse.json({ analysis, documentText });
+  return NextResponse.json({ analysis, documentText, redactions });
 }
 
-function errorResponse(code: string, message: string, status: number): NextResponse<ApiError> {
-  return NextResponse.json({ error: { code, message } }, { status });
+function errorResponse(
+  code: string,
+  message: string,
+  status: number,
+  retryAfterSeconds?: number,
+): NextResponse<ApiError> {
+  const headers =
+    retryAfterSeconds !== undefined ? { "Retry-After": String(retryAfterSeconds) } : undefined;
+  return NextResponse.json({ error: { code, message } }, { status, headers });
 }
 
 function extractTextStatus(code: ExtractTextError["code"]): number {

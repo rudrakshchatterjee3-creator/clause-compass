@@ -3,8 +3,23 @@ import { generateStructured, AiError } from "@/lib/ai/generateStructured";
 import { BRIEF_SYSTEM_PROMPT, buildBriefContents } from "@/lib/ai/prompts";
 import { briefRequestSchema, type ApiError } from "@/lib/schemas/api";
 import { briefSchema } from "@/lib/schemas/brief";
+import { RateLimiter, getClientIp } from "@/lib/security/rateLimit";
+import { logRouteError } from "@/lib/security/logger";
+
+const ROUTE = "brief";
+const rateLimiter = new RateLimiter({ limit: 10, windowMs: 60_000 });
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const rate = rateLimiter.check(getClientIp(request));
+  if (!rate.allowed) {
+    return errorResponse(
+      "rate_limited",
+      "Too many requests. Please wait before trying again.",
+      429,
+      rate.retryAfterSeconds,
+    );
+  }
+
   let body: unknown;
   try {
     body = await request.json();
@@ -32,16 +47,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
   } catch (error) {
     if (error instanceof AiError) {
+      logRouteError({ route: ROUTE, code: error.code, status: aiErrorStatus(error.code) }, error);
       return errorResponse(error.code, error.message, aiErrorStatus(error.code));
     }
+    logRouteError({ route: ROUTE, code: "internal_error", status: 500 }, error);
     return errorResponse("internal_error", "Failed to generate the brief", 500);
   }
 
   return NextResponse.json({ brief, generatedAt: new Date().toISOString() });
 }
 
-function errorResponse(code: string, message: string, status: number): NextResponse<ApiError> {
-  return NextResponse.json({ error: { code, message } }, { status });
+function errorResponse(
+  code: string,
+  message: string,
+  status: number,
+  retryAfterSeconds?: number,
+): NextResponse<ApiError> {
+  const headers =
+    retryAfterSeconds !== undefined ? { "Retry-After": String(retryAfterSeconds) } : undefined;
+  return NextResponse.json({ error: { code, message } }, { status, headers });
 }
 
 function aiErrorStatus(code: AiError["code"]): number {

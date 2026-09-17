@@ -4,8 +4,9 @@ import { ComparePicker } from "@/components/ComparePicker";
 import { LoadingState } from "@/components/LoadingState";
 import { ErrorState } from "@/components/ErrorState";
 import { ComparisonList } from "@/components/ComparisonList";
+import { RedactionNotice } from "@/components/RedactionNotice";
 import type { Comparison } from "@/lib/schemas";
-import type { ApiErrorInfo } from "@/components/askTypes";
+import type { ApiErrorInfo, RedactionSummaryDto } from "@/components/askTypes";
 
 const COMPARE_STAGES = ["Reading both documents…", "Lining up matching clauses…", "Checking quotes…"];
 
@@ -13,6 +14,7 @@ interface ComparePanelProps {
   status: "idle" | "loading" | "success" | "error";
   comparison: Comparison | null;
   docBLabel: string | null;
+  redactions: RedactionSummaryDto[];
   error: ApiErrorInfo | null;
   onlyChanges: boolean;
   onToggleOnlyChanges: () => void;
@@ -26,6 +28,7 @@ export function ComparePanel({
   status,
   comparison,
   docBLabel,
+  redactions,
   error,
   onlyChanges,
   onToggleOnlyChanges,
@@ -60,6 +63,11 @@ export function ComparePanel({
             Compare with something else
           </button>
         </div>
+        {redactions.length > 0 && (
+          <div className="mb-4">
+            <RedactionNotice redactions={redactions} />
+          </div>
+        )}
         <ComparisonList
           comparison={comparison}
           docALabel="Your document"

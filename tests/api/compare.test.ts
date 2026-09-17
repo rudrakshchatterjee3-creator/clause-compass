@@ -153,4 +153,48 @@ describe("POST /api/compare", () => {
     );
     expect(response.status).toBe(502);
   });
+
+  it("redacts PII from both documents before sending them to the model, by default", async () => {
+    generateContentMock.mockResolvedValue({
+      text: JSON.stringify({ items: [], summary: "x" }),
+    });
+
+    const response = await POST(
+      buildRequest(
+        { documentTextA: `${DOC_A} Contact jane@example.com. Case: redact-default.` },
+        { content: `${DOC_B} Case: redact-default.`, name: "b.txt", type: "text/plain" },
+      ),
+    );
+    expect(response.status).toBe(200);
+
+    const callArgs = generateContentMock.mock.calls[0]![0] as { contents: string };
+    expect(callArgs.contents).toContain("[REDACTED_EMAIL]");
+    expect(callArgs.contents).not.toContain("jane@example.com");
+
+    const body = await response.json();
+    expect(body.redactions).toEqual([{ type: "email", count: 1 }]);
+    expect(body.documentTextA).toContain("jane@example.com");
+  });
+
+  it("sends the original text when redactPii is explicitly disabled", async () => {
+    generateContentMock.mockResolvedValue({
+      text: JSON.stringify({ items: [], summary: "x" }),
+    });
+
+    const response = await POST(
+      buildRequest(
+        {
+          documentTextA: `${DOC_A} Contact jane@example.com. Case: redact-disabled.`,
+          redactPii: "false",
+        },
+        { content: `${DOC_B} Case: redact-disabled.`, name: "b.txt", type: "text/plain" },
+      ),
+    );
+
+    const callArgs = generateContentMock.mock.calls[0]![0] as { contents: string };
+    expect(callArgs.contents).toContain("jane@example.com");
+
+    const body = await response.json();
+    expect(body.redactions).toEqual([]);
+  });
 });

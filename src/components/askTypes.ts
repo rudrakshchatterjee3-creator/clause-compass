@@ -5,6 +5,11 @@ export interface ApiErrorInfo {
   message: string;
 }
 
+export interface RedactionSummaryDto {
+  type: string;
+  count: number;
+}
+
 export type AskTurnStatus = "streaming" | "done" | "error";
 
 export interface AskTurn {
@@ -14,4 +19,5 @@ export interface AskTurn {
   result: AskAnswer | null;
   status: AskTurnStatus;
   error: ApiErrorInfo | null;
+  redactions: RedactionSummaryDto[];
 }
