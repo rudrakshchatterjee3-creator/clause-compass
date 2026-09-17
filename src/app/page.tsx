@@ -11,12 +11,12 @@ import { ClauseList } from "@/components/ClauseList";
 import { DocumentPane } from "@/components/DocumentPane";
 import { AskPanel } from "@/components/AskPanel";
 import { ComparePanel } from "@/components/ComparePanel";
+import { BriefPanel } from "@/components/BriefPanel";
 import { TabList, tabButtonId, tabPanelId, type TabItem } from "@/components/Tabs";
-import { StubPanel } from "@/components/StubPanel";
 import type { ApiErrorInfo, AskTurn } from "@/components/askTypes";
 import type { AskStreamEvent } from "@/lib/schemas/api";
 import { parseNdjsonStream } from "@/lib/streaming/ndjson";
-import type { Analysis, ClauseType, Comparison, RiskLevel } from "@/lib/schemas";
+import type { Analysis, Brief, ClauseType, Comparison, RiskLevel } from "@/lib/schemas";
 
 type TabId = "clauses" | "ask" | "compare" | "brief";
 
@@ -48,6 +48,10 @@ interface AppState {
   compareError: ApiErrorInfo | null;
   compareOnlyChanges: boolean;
   compareLastRequest: { file?: File; baselineId?: string; label: string } | null;
+  briefStatus: "idle" | "loading" | "success" | "error";
+  brief: Brief | null;
+  briefGeneratedAt: string | null;
+  briefError: ApiErrorInfo | null;
 }
 
 type AppAction =
@@ -69,7 +73,10 @@ type AppAction =
   | { type: "COMPARE_SUCCESS"; comparison: Comparison }
   | { type: "COMPARE_ERROR"; error: ApiErrorInfo }
   | { type: "COMPARE_TOGGLE_ONLY_CHANGES" }
-  | { type: "COMPARE_RESET" };
+  | { type: "COMPARE_RESET" }
+  | { type: "BRIEF_START" }
+  | { type: "BRIEF_SUCCESS"; brief: Brief; generatedAt: string }
+  | { type: "BRIEF_ERROR"; error: ApiErrorInfo };
 
 const initialState: AppState = {
   status: "idle",
@@ -90,6 +97,10 @@ const initialState: AppState = {
   compareError: null,
   compareOnlyChanges: false,
   compareLastRequest: null,
+  briefStatus: "idle",
+  brief: null,
+  briefGeneratedAt: null,
+  briefError: null,
 };
 
 function reducer(state: AppState, action: AppAction): AppState {
@@ -187,6 +198,17 @@ function reducer(state: AppState, action: AppAction): AppState {
         compareError: null,
         compareLastRequest: null,
       };
+    case "BRIEF_START":
+      return { ...state, briefStatus: "loading", briefError: null };
+    case "BRIEF_SUCCESS":
+      return {
+        ...state,
+        briefStatus: "success",
+        brief: action.brief,
+        briefGeneratedAt: action.generatedAt,
+      };
+    case "BRIEF_ERROR":
+      return { ...state, briefStatus: "error", briefError: action.error };
     default:
       return state;
   }
@@ -320,6 +342,43 @@ async function submitCompare(
   }
 }
 
+async function submitBrief(
+  params: { analysis: Analysis; qaHistory: { question: string; answer: string }[] },
+  dispatch: Dispatch<AppAction>,
+) {
+  dispatch({ type: "BRIEF_START" });
+
+  try {
+    const response = await fetch("/api/brief", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ analysis: params.analysis, qaHistory: params.qaHistory }),
+    });
+    const body = await response.json();
+
+    if (!response.ok) {
+      dispatch({
+        type: "BRIEF_ERROR",
+        error: body?.error ?? {
+          code: "unknown",
+          message: "Something went wrong. Please try again.",
+        },
+      });
+      return;
+    }
+
+    dispatch({ type: "BRIEF_SUCCESS", brief: body.brief, generatedAt: body.generatedAt });
+  } catch {
+    dispatch({
+      type: "BRIEF_ERROR",
+      error: {
+        code: "network_error",
+        message: "Could not reach the server. Check your connection and try again.",
+      },
+    });
+  }
+}
+
 export default function Home() {
   const [state, dispatch] = useReducer(reducer, initialState);
 
@@ -398,6 +457,14 @@ export default function Home() {
     () => dispatch({ type: "COMPARE_TOGGLE_ONLY_CHANGES" }),
     [],
   );
+
+  const handleGenerateBrief = useCallback(() => {
+    if (!state.analysis) return;
+    const qaHistory = state.askTurns
+      .filter((turn) => turn.status === "done")
+      .map((turn) => ({ question: turn.question, answer: turn.answer }));
+    void submitBrief({ analysis: state.analysis, qaHistory }, dispatch);
+  }, [state.analysis, state.askTurns]);
 
   return (
     <>
@@ -527,9 +594,15 @@ export default function Home() {
                 tabIndex={0}
                 className="pt-6"
               >
-                <StubPanel
-                  title="Brief isn't built yet"
-                  description="Soon you'll get a printable one-pager: risks, questions for a lawyer, and a checklist."
+                <BriefPanel
+                  status={state.briefStatus}
+                  brief={state.brief}
+                  generatedAt={state.briefGeneratedAt}
+                  docTitle={state.analysis.docTitle}
+                  disclaimer={state.analysis.disclaimer}
+                  error={state.briefError}
+                  onGenerate={handleGenerateBrief}
+                  onRetry={handleGenerateBrief}
                 />
               </div>
             </div>

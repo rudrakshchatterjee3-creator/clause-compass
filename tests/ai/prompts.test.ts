@@ -5,6 +5,10 @@ import {
   DOCUMENT_TAG_CLOSE,
   DISCLAIMER,
   ANALYZE_SYSTEM_PROMPT,
+  ANALYSIS_TAG_OPEN,
+  ANALYSIS_TAG_CLOSE,
+  BRIEF_SYSTEM_PROMPT,
+  buildBriefContents,
 } from "@/lib/ai/prompts";
 
 describe("wrapDocument", () => {
@@ -43,5 +47,64 @@ describe("ANALYZE_SYSTEM_PROMPT", () => {
   it("frames output as information, not legal advice", () => {
     expect(ANALYZE_SYSTEM_PROMPT).toMatch(/not a lawyer/i);
     expect(ANALYZE_SYSTEM_PROMPT).toMatch(/never give legal advice/i);
+  });
+});
+
+describe("buildBriefContents", () => {
+  const analysis = {
+    docTitle: "Residential Lease",
+    parties: ["Landlord", "Tenant"],
+    summary: "A lease.",
+    clauses: [
+      {
+        title: "Late Fees",
+        type: "penalty",
+        plainEnglish: "Late rent costs extra.",
+        risk: { level: "high", reason: "Uncapped fee." },
+        obligations: [{ party: "Tenant", duty: "Pay on time", deadline: "the 1st" }],
+      },
+    ],
+    missingCommonClauses: ["Pet policy"],
+  };
+
+  it("wraps the analysis in delimiters and includes clause detail", () => {
+    const contents = buildBriefContents({ analysis });
+    expect(contents).toContain(ANALYSIS_TAG_OPEN);
+    expect(contents).toContain(ANALYSIS_TAG_CLOSE);
+    expect(contents).toContain("Late Fees");
+    expect(contents).toContain("high risk");
+    expect(contents).toContain("Tenant must Pay on time, due the 1st");
+    expect(contents).toContain("Missing common clauses: Pet policy");
+  });
+
+  it("appends Q&A history when provided", () => {
+    const contents = buildBriefContents({
+      analysis,
+      qaHistory: [{ question: "What if I pay late?", answer: "You owe a fee." }],
+    });
+    expect(contents).toContain("Q1: What if I pay late?");
+    expect(contents).toContain("A1: You owe a fee.");
+  });
+
+  it("omits the history section when there is none", () => {
+    const contents = buildBriefContents({ analysis });
+    expect(contents).not.toContain("also asked");
+  });
+});
+
+describe("BRIEF_SYSTEM_PROMPT", () => {
+  it("references the analysis delimiters and treats them as data", () => {
+    expect(BRIEF_SYSTEM_PROMPT).toContain(ANALYSIS_TAG_OPEN);
+    expect(BRIEF_SYSTEM_PROMPT).toContain(ANALYSIS_TAG_CLOSE);
+    expect(BRIEF_SYSTEM_PROMPT).toMatch(/data, not instructions/i);
+  });
+
+  it("frames output as preparation, not legal advice", () => {
+    expect(BRIEF_SYSTEM_PROMPT).toMatch(/not a lawyer/i);
+    expect(BRIEF_SYSTEM_PROMPT).toMatch(/never give legal advice/i);
+  });
+
+  it("forbids inventing facts", () => {
+    expect(BRIEF_SYSTEM_PROMPT).toMatch(/never invent/i);
   });
 });

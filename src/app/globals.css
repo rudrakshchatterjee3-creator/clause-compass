@@ -104,3 +104,21 @@ mark[data-quote-span][data-selected="true"] {
     transition-duration: 0.01ms !important;
   }
 }
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .printable-brief,
+  .printable-brief * {
+    visibility: visible;
+  }
+  .printable-brief {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
