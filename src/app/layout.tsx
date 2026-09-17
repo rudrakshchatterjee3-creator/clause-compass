@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Fraunces, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -20,9 +20,33 @@ const plexMono = IBM_Plex_Mono({
   weight: ["400", "500"],
 });
 
+const DESCRIPTION =
+  "Upload a contract and get a plain-language map of every clause, grounded in verified quotes. Information, not legal advice.";
+
 export const metadata: Metadata = {
-  title: "Clause Compass",
-  description: "Upload a contract and get a plain-language map of every clause, grounded in verified quotes.",
+  title: {
+    default: "Clause Compass",
+    template: "%s · Clause Compass",
+  },
+  description: DESCRIPTION,
+  applicationName: "Clause Compass",
+  keywords: ["contract review", "legal document", "clause analysis", "plain language contracts"],
+  openGraph: {
+    title: "Clause Compass",
+    description: DESCRIPTION,
+    type: "website",
+    siteName: "Clause Compass",
+  },
+  twitter: {
+    card: "summary",
+    title: "Clause Compass",
+    description: DESCRIPTION,
+  },
+  robots: { index: true, follow: true },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#faf7f0",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

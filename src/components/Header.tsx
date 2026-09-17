@@ -5,9 +5,9 @@ export function Header() {
     <header className="border-b border-line bg-paper-raised">
       <div className="mx-auto flex max-w-6xl items-center gap-2.5 px-4 py-4 sm:px-6">
         <CompassIcon className="h-7 w-7 text-harbor" />
-        <span className="font-display text-xl font-semibold tracking-tight text-ink">
+        <h1 className="font-display text-xl font-semibold tracking-tight text-ink">
           Clause Compass
-        </span>
+        </h1>
       </div>
       <div className="border-t border-line bg-brass-soft">
         <p className="mx-auto max-w-6xl px-4 py-2 text-sm text-ink-soft sm:px-6">

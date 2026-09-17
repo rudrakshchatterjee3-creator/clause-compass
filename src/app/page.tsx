@@ -542,9 +542,9 @@ export default function Home() {
         {state.status === "idle" && (
           <div className="grid items-center gap-10 py-10 lg:grid-cols-2 lg:gap-16 lg:py-16">
             <div className="text-center lg:text-left">
-              <h1 className="font-display text-4xl font-semibold leading-tight text-ink sm:text-5xl">
+              <h2 className="font-display text-4xl font-semibold leading-tight text-ink sm:text-5xl">
                 Know what you&apos;re signing before you sign it.
-              </h1>
+              </h2>
               <p className="mx-auto mt-4 max-w-md text-base text-ink-soft lg:mx-0">
                 Upload a contract and Clause Compass maps every clause: what it means, what it
                 asks of you, and how risky it is — all grounded in quotes from your own document.

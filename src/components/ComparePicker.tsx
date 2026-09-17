@@ -31,6 +31,8 @@ export function ComparePicker({ onPickFile, onPickBaseline }: ComparePickerProps
         id="compare-file-input"
         type="file"
         accept={ACCEPT}
+        aria-label="Upload a second document to compare"
+        tabIndex={-1}
         onChange={handleInputChange}
         className="sr-only"
       />
