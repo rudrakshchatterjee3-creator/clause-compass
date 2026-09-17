@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { extractText, ExtractTextError } from "@/lib/parsing/extractText";
 import { generateStructured, AiError } from "@/lib/ai/generateStructured";
 import { ANALYZE_SYSTEM_PROMPT, DISCLAIMER, wrapDocument } from "@/lib/ai/prompts";
-import { analyzeRequestSchema, type ApiError } from "@/lib/schemas/api";
+import { analyzeRequestSchema } from "@/lib/schemas/api";
 import { analysisDraftSchema, type Analysis } from "@/lib/schemas/analysis";
 import type { Clause } from "@/lib/schemas/clause";
 import { verifyQuoteFields } from "@/lib/grounding/verify";
@@ -12,6 +12,7 @@ import { LruCache } from "@/lib/security/lru";
 import { RateLimiter, getClientIp } from "@/lib/security/rateLimit";
 import { redactPii } from "@/lib/security/redactPii";
 import { logRouteError } from "@/lib/security/logger";
+import { errorResponse, aiErrorStatus, extractTextStatus } from "@/lib/api/response";
 
 const ROUTE = "analyze";
 const analysisCache = new LruCache<string, Analysis>({ capacity: 50, ttlMs: 30 * 60 * 1000 });
@@ -106,38 +107,4 @@ export async function POST(request: Request): Promise<NextResponse> {
   analysisCache.set(hash, analysis);
 
   return NextResponse.json({ analysis, documentText, redactions });
-}
-
-function errorResponse(
-  code: string,
-  message: string,
-  status: number,
-  retryAfterSeconds?: number,
-): NextResponse<ApiError> {
-  const headers =
-    retryAfterSeconds !== undefined ? { "Retry-After": String(retryAfterSeconds) } : undefined;
-  return NextResponse.json({ error: { code, message } }, { status, headers });
-}
-
-function extractTextStatus(code: ExtractTextError["code"]): number {
-  switch (code) {
-    case "unsupported_mime":
-      return 400;
-    case "file_too_large":
-    case "text_too_large":
-      return 413;
-    case "empty_text":
-    case "parse_failed":
-      return 422;
-  }
-}
-
-function aiErrorStatus(code: AiError["code"]): number {
-  switch (code) {
-    case "timeout":
-      return 504;
-    case "invalid_response":
-    case "request_failed":
-      return 502;
-  }
 }

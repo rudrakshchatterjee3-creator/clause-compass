@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { locateQuote } from "@/lib/grounding/locateQuote";
+import { locateQuote, createQuoteLocator } from "@/lib/grounding/locateQuote";
 
 describe("locateQuote", () => {
   it("finds an exact quote", () => {
@@ -89,5 +89,31 @@ describe("locateQuote", () => {
 
   it("returns null for a quote that is only an ellipsis", () => {
     expect(locateQuote("Some text here.", "...")).toBeNull();
+  });
+});
+
+describe("createQuoteLocator", () => {
+  it("locates multiple quotes against the same normalized document", () => {
+    const source = "The tenant shall pay rent. Late fees may apply after 5 days.";
+    const locator = createQuoteLocator(source);
+
+    const rent = locator.locate("pay rent");
+    const lateFees = locator.locate("Late fees may apply");
+
+    expect(rent).not.toBeNull();
+    expect(source.slice(rent!.start, rent!.end)).toBe("pay rent");
+    expect(lateFees).not.toBeNull();
+    expect(source.slice(lateFees!.start, lateFees!.end)).toBe("Late fees may apply");
+  });
+
+  it("returns null from the shared locator for a quote that isn't present", () => {
+    const locator = createQuoteLocator("The tenant shall pay rent.");
+    expect(locator.locate("this text does not appear")).toBeNull();
+  });
+
+  it("agrees with locateQuote for the same source and quote", () => {
+    const source = "The tenant shall pay rent on the first of each month.";
+    const quote = "pay rent on the first";
+    expect(createQuoteLocator(source).locate(quote)).toEqual(locateQuote(source, quote));
   });
 });

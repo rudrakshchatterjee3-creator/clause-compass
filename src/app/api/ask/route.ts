@@ -1,5 +1,4 @@
-import { NextResponse } from "next/server";
-import { askRequestSchema, type ApiError, type AskStreamEvent } from "@/lib/schemas/api";
+import { askRequestSchema, type AskStreamEvent } from "@/lib/schemas/api";
 import { askDetailDraftSchema, type AskAnswer, type AskStep } from "@/lib/schemas/askAnswer";
 import { generateStreamingText } from "@/lib/ai/generateStreamingText";
 import { generateStructured, AiError } from "@/lib/ai/generateStructured";
@@ -13,6 +12,7 @@ import { encodeNdjsonLine, NDJSON_CONTENT_TYPE } from "@/lib/streaming/ndjson";
 import { RateLimiter, getClientIp } from "@/lib/security/rateLimit";
 import { redactPii } from "@/lib/security/redactPii";
 import { logRouteError } from "@/lib/security/logger";
+import { errorResponse, aiErrorStatus } from "@/lib/api/response";
 
 const ROUTE = "ask";
 const rateLimiter = new RateLimiter({ limit: 10, windowMs: 60_000 });
@@ -113,25 +113,4 @@ export async function POST(request: Request): Promise<Response> {
       "Cache-Control": "no-store",
     },
   });
-}
-
-function errorResponse(
-  code: string,
-  message: string,
-  status: number,
-  retryAfterSeconds?: number,
-): NextResponse<ApiError> {
-  const headers =
-    retryAfterSeconds !== undefined ? { "Retry-After": String(retryAfterSeconds) } : undefined;
-  return NextResponse.json({ error: { code, message } }, { status, headers });
-}
-
-function aiErrorStatus(code: AiError["code"]): number {
-  switch (code) {
-    case "timeout":
-      return 504;
-    case "invalid_response":
-    case "request_failed":
-      return 502;
-  }
 }

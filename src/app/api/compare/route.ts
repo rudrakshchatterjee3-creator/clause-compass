@@ -6,20 +6,21 @@ import {
 } from "@/lib/parsing/extractText";
 import { generateStructured, AiError } from "@/lib/ai/generateStructured";
 import { COMPARE_SYSTEM_PROMPT, wrapDocumentPair } from "@/lib/ai/prompts";
-import { analyzeRequestSchema, compareRequestSchema, type ApiError } from "@/lib/schemas/api";
+import { analyzeRequestSchema, compareRequestSchema } from "@/lib/schemas/api";
 import {
   comparisonDraftSchema,
   type Comparison,
   type ComparisonItem,
   type ComparisonQuote,
 } from "@/lib/schemas/comparison";
-import { verifyQuote } from "@/lib/grounding/verify";
+import { createQuoteLocator, type QuoteLocator } from "@/lib/grounding/locateQuote";
 import { loadBaselineText, BaselineNotFoundError } from "@/lib/compare/loadBaseline";
 import { sha256 } from "@/lib/security/hash";
 import { LruCache } from "@/lib/security/lru";
 import { RateLimiter, getClientIp } from "@/lib/security/rateLimit";
 import { redactPii, type RedactionSummary } from "@/lib/security/redactPii";
 import { logRouteError } from "@/lib/security/logger";
+import { errorResponse, aiErrorStatus, extractTextStatus } from "@/lib/api/response";
 
 const ROUTE = "compare";
 const compareCache = new LruCache<string, Comparison>({ capacity: 50, ttlMs: 30 * 60 * 1000 });
@@ -142,11 +143,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     return errorResponse("internal_error", "Failed to compare the documents", 500);
   }
 
+  // Build each document's locator once and reuse it across every item,
+  // rather than re-normalizing the whole document per quote.
+  const locatorA = createQuoteLocator(documentTextA);
+  const locatorB = createQuoteLocator(documentTextB);
+
   const items: ComparisonItem[] = draft.items.map((item) => ({
     topic: item.topic,
     status: item.status,
-    docA: groundQuote(documentTextA, item.docAQuote),
-    docB: groundQuote(documentTextB, item.docBQuote),
+    docA: groundQuote(locatorA, item.docAQuote),
+    docB: groundQuote(locatorB, item.docBQuote),
     explanation: item.explanation,
     favours: item.favours,
   }));
@@ -169,41 +175,9 @@ function mergeRedactionSummaries(
   return Array.from(counts.entries()).map(([type, count]) => ({ type, count }));
 }
 
-function groundQuote(sourceText: string, quote: string | undefined): ComparisonQuote | undefined {
+function groundQuote(locator: QuoteLocator, quote: string | undefined): ComparisonQuote | undefined {
   if (!quote) return undefined;
-  return { quote, ...verifyQuote(sourceText, quote) };
-}
-
-function errorResponse(
-  code: string,
-  message: string,
-  status: number,
-  retryAfterSeconds?: number,
-): NextResponse<ApiError> {
-  const headers =
-    retryAfterSeconds !== undefined ? { "Retry-After": String(retryAfterSeconds) } : undefined;
-  return NextResponse.json({ error: { code, message } }, { status, headers });
-}
-
-function extractTextStatus(code: ExtractTextError["code"]): number {
-  switch (code) {
-    case "unsupported_mime":
-      return 400;
-    case "file_too_large":
-    case "text_too_large":
-      return 413;
-    case "empty_text":
-    case "parse_failed":
-      return 422;
-  }
-}
-
-function aiErrorStatus(code: AiError["code"]): number {
-  switch (code) {
-    case "timeout":
-      return 504;
-    case "invalid_response":
-    case "request_failed":
-      return 502;
-  }
+  const location = locator.locate(quote);
+  if (!location) return { quote, verified: false };
+  return { quote, start: location.start, end: location.end, verified: true };
 }

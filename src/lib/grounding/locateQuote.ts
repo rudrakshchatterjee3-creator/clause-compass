@@ -101,16 +101,34 @@ function locateEllipsisQuote(
   return { start: firstMatch.location.start, end: lastMatch.location.end };
 }
 
-export function locateQuote(source: string, quote: string): QuoteLocation | null {
-  const trimmedQuote = quote.trim();
-  if (trimmedQuote.length === 0) return null;
+export interface QuoteLocator {
+  locate(quote: string): QuoteLocation | null;
+}
 
+/**
+ * Normalizes `source` once and returns a reusable locator. Prefer this over
+ * calling `locateQuote` in a loop — verifying every clause/step in a
+ * document by re-normalizing the whole document on each call is O(items ×
+ * document length) instead of O(items + document length).
+ */
+export function createQuoteLocator(source: string): QuoteLocator {
   const { normalized: normSource, indexMap } = normalize(source);
 
-  if (trimmedQuote.includes("...") || trimmedQuote.includes("…")) {
-    return locateEllipsisQuote(normSource, indexMap, trimmedQuote);
-  }
+  return {
+    locate(quote: string): QuoteLocation | null {
+      const trimmedQuote = quote.trim();
+      if (trimmedQuote.length === 0) return null;
 
-  const match = findSegment(normSource, indexMap, trimmedQuote, 0);
-  return match ? match.location : null;
+      if (trimmedQuote.includes("...") || trimmedQuote.includes("…")) {
+        return locateEllipsisQuote(normSource, indexMap, trimmedQuote);
+      }
+
+      const match = findSegment(normSource, indexMap, trimmedQuote, 0);
+      return match ? match.location : null;
+    },
+  };
+}
+
+export function locateQuote(source: string, quote: string): QuoteLocation | null {
+  return createQuoteLocator(source).locate(quote);
 }

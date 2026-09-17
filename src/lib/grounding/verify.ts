@@ -1,4 +1,4 @@
-import { locateQuote } from "./locateQuote";
+import { createQuoteLocator, type QuoteLocation } from "./locateQuote";
 
 export interface VerifiedFields {
   start?: number;
@@ -6,12 +6,13 @@ export interface VerifiedFields {
   verified: boolean;
 }
 
-export function verifyQuote(sourceText: string, quote: string): VerifiedFields {
-  const location = locateQuote(sourceText, quote);
-  if (!location) {
-    return { verified: false };
-  }
+function toVerifiedFields(location: QuoteLocation | null): VerifiedFields {
+  if (!location) return { verified: false };
   return { start: location.start, end: location.end, verified: true };
+}
+
+export function verifyQuote(sourceText: string, quote: string): VerifiedFields {
+  return toVerifiedFields(createQuoteLocator(sourceText).locate(quote));
 }
 
 export function verifyQuoteField<T extends { quote: string }>(
@@ -21,9 +22,14 @@ export function verifyQuoteField<T extends { quote: string }>(
   return { ...item, ...verifyQuote(sourceText, item.quote) };
 }
 
+/**
+ * Verifies every item's quote against `sourceText`, normalizing the
+ * document once and reusing it across all items (see `createQuoteLocator`).
+ */
 export function verifyQuoteFields<T extends { quote: string }>(
   sourceText: string,
   items: readonly T[],
 ): (T & VerifiedFields)[] {
-  return items.map((item) => verifyQuoteField(sourceText, item));
+  const locator = createQuoteLocator(sourceText);
+  return items.map((item) => ({ ...item, ...toVerifiedFields(locator.locate(item.quote)) }));
 }

@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { generateStructured, AiError } from "@/lib/ai/generateStructured";
 import { BRIEF_SYSTEM_PROMPT, buildBriefContents } from "@/lib/ai/prompts";
-import { briefRequestSchema, type ApiError } from "@/lib/schemas/api";
+import { briefRequestSchema } from "@/lib/schemas/api";
 import { briefSchema } from "@/lib/schemas/brief";
 import { RateLimiter, getClientIp } from "@/lib/security/rateLimit";
 import { logRouteError } from "@/lib/security/logger";
+import { errorResponse, aiErrorStatus } from "@/lib/api/response";
 
 const ROUTE = "brief";
 const rateLimiter = new RateLimiter({ limit: 10, windowMs: 60_000 });
@@ -55,25 +56,4 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   return NextResponse.json({ brief, generatedAt: new Date().toISOString() });
-}
-
-function errorResponse(
-  code: string,
-  message: string,
-  status: number,
-  retryAfterSeconds?: number,
-): NextResponse<ApiError> {
-  const headers =
-    retryAfterSeconds !== undefined ? { "Retry-After": String(retryAfterSeconds) } : undefined;
-  return NextResponse.json({ error: { code, message } }, { status, headers });
-}
-
-function aiErrorStatus(code: AiError["code"]): number {
-  switch (code) {
-    case "timeout":
-      return 504;
-    case "invalid_response":
-    case "request_failed":
-      return 502;
-  }
 }
