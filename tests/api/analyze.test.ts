@@ -1,16 +1,37 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { generateContentMock } = vi.hoisted(() => ({
-  generateContentMock: vi.fn(),
+const { chatCompletionMock } = vi.hoisted(() => ({
+  chatCompletionMock: vi.fn(),
 }));
 
 vi.mock("@/lib/ai/client", () => ({
-  getGenAIClient: () => ({ models: { generateContent: generateContentMock } }),
+  getAiClient: () => ({ chatCompletion: chatCompletionMock }),
 }));
 
 import { POST } from "@/app/api/analyze/route";
 
 const DOCUMENT_TEXT = "The tenant shall pay $1,200 rent on the first of each month.";
+
+/** Builds a fetch-style Response whose body streams a single SSE content delta. */
+function jsonResponse(content: string): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const chunk = { choices: [{ delta: { content } }] };
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+  return new Response(body, { status: 200 });
+}
+
+function userMessageContent(callIndex: number): string {
+  const args = chatCompletionMock.mock.calls[callIndex]![0] as {
+    messages: { role: string; content: string }[];
+  };
+  return args.messages.find((m) => m.role === "user")!.content;
+}
 
 function buildRequest(
   options: {
@@ -49,11 +70,11 @@ function validDraft() {
 
 describe("POST /api/analyze", () => {
   beforeEach(() => {
-    generateContentMock.mockReset();
+    chatCompletionMock.mockReset();
   });
 
   it("returns a verified analysis for a valid first response", async () => {
-    generateContentMock.mockResolvedValue({ text: JSON.stringify(validDraft()) });
+    chatCompletionMock.mockResolvedValue(jsonResponse(JSON.stringify(validDraft())));
 
     const response = await POST(buildRequest());
     expect(response.status).toBe(200);
@@ -64,17 +85,17 @@ describe("POST /api/analyze", () => {
     expect(body.analysis.clauses).toHaveLength(1);
     expect(body.analysis.clauses[0].verified).toBe(true);
     expect(body.analysis.clauses[0].id).toEqual(expect.any(String));
-    expect(generateContentMock).toHaveBeenCalledTimes(1);
+    expect(chatCompletionMock).toHaveBeenCalledTimes(1);
   });
 
   it("retries once and succeeds when the first model response is invalid", async () => {
-    generateContentMock
-      .mockResolvedValueOnce({ text: "not json" })
-      .mockResolvedValueOnce({ text: JSON.stringify(validDraft()) });
+    chatCompletionMock
+      .mockResolvedValueOnce(jsonResponse("not json"))
+      .mockResolvedValueOnce(jsonResponse(JSON.stringify(validDraft())));
 
     const response = await POST(buildRequest({ content: `${DOCUMENT_TEXT} Case: retry.` }));
     expect(response.status).toBe(200);
-    expect(generateContentMock).toHaveBeenCalledTimes(2);
+    expect(chatCompletionMock).toHaveBeenCalledTimes(2);
 
     const body = await response.json();
     expect(body.analysis.clauses).toHaveLength(1);
@@ -83,7 +104,7 @@ describe("POST /api/analyze", () => {
   it("marks a clause unverified when its quote can't be located in the source", async () => {
     const draft = validDraft();
     draft.clauses[0]!.quote = "this text is not actually in the document";
-    generateContentMock.mockResolvedValue({ text: JSON.stringify(draft) });
+    chatCompletionMock.mockResolvedValue(jsonResponse(JSON.stringify(draft)));
 
     const response = await POST(buildRequest({ content: `${DOCUMENT_TEXT} Case: unverified.` }));
     const body = await response.json();
@@ -94,14 +115,15 @@ describe("POST /api/analyze", () => {
   });
 
   it("returns a clean 502 error after both attempts fail", async () => {
-    generateContentMock.mockResolvedValue({ text: "still not json" });
+    // A fresh Response per call: bodies are single-use and this retries once.
+    chatCompletionMock.mockImplementation(async () => jsonResponse("still not json"));
 
     const response = await POST(buildRequest({ content: `${DOCUMENT_TEXT} Case: total failure.` }));
     expect(response.status).toBe(502);
 
     const body = await response.json();
     expect(body.error.code).toBe("invalid_response");
-    expect(generateContentMock).toHaveBeenCalledTimes(2);
+    expect(chatCompletionMock).toHaveBeenCalledTimes(2);
   });
 
   it("rejects an oversized file without calling the model", async () => {
@@ -111,7 +133,7 @@ describe("POST /api/analyze", () => {
     expect(response.status).toBe(413);
     const body = await response.json();
     expect(body.error.code).toBe("file_too_large");
-    expect(generateContentMock).not.toHaveBeenCalled();
+    expect(chatCompletionMock).not.toHaveBeenCalled();
   });
 
   it("rejects an unsupported mime type without calling the model", async () => {
@@ -122,19 +144,19 @@ describe("POST /api/analyze", () => {
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body.error.code).toBe("invalid_request");
-    expect(generateContentMock).not.toHaveBeenCalled();
+    expect(chatCompletionMock).not.toHaveBeenCalled();
   });
 
   it("redacts PII from the document before sending it to the model, by default", async () => {
-    generateContentMock.mockResolvedValue({ text: JSON.stringify(validDraft()) });
+    chatCompletionMock.mockResolvedValue(jsonResponse(JSON.stringify(validDraft())));
     const content = `${DOCUMENT_TEXT} Contact jane@example.com. Case: redact-default.`;
 
     const response = await POST(buildRequest({ content }));
     expect(response.status).toBe(200);
 
-    const callArgs = generateContentMock.mock.calls[0]![0] as { contents: string };
-    expect(callArgs.contents).toContain("[REDACTED_EMAIL]");
-    expect(callArgs.contents).not.toContain("jane@example.com");
+    const sentContent = userMessageContent(0);
+    expect(sentContent).toContain("[REDACTED_EMAIL]");
+    expect(sentContent).not.toContain("jane@example.com");
 
     const body = await response.json();
     expect(body.documentText).toContain("jane@example.com");
@@ -142,13 +164,13 @@ describe("POST /api/analyze", () => {
   });
 
   it("sends the original text when redactPii is explicitly disabled", async () => {
-    generateContentMock.mockResolvedValue({ text: JSON.stringify(validDraft()) });
+    chatCompletionMock.mockResolvedValue(jsonResponse(JSON.stringify(validDraft())));
     const content = `${DOCUMENT_TEXT} Contact jane@example.com. Case: redact-disabled.`;
 
     const response = await POST(buildRequest({ content, redactPii: false }));
 
-    const callArgs = generateContentMock.mock.calls[0]![0] as { contents: string };
-    expect(callArgs.contents).toContain("jane@example.com");
+    const sentContent = userMessageContent(0);
+    expect(sentContent).toContain("jane@example.com");
 
     const body = await response.json();
     expect(body.redactions).toEqual([]);

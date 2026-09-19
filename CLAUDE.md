@@ -10,7 +10,7 @@ This tool gives information, not legal advice. That must be visible in the UI an
 
 ## Stack
 - Next.js (App Router) + TypeScript `strict`, Tailwind CSS
-- Gemini via `@google/genai`, called **only** from server code. Model name comes from `GEMINI_MODEL` env.
+- Groq (OpenAI-compatible chat completions), called **only** from server code via a thin `fetch` wrapper. Model name comes from `GROQ_MODEL` env.
 - zod for all schemas (AI output, API input, env)
 - PDF text extraction server-side with `unpdf`
 - Vitest (unit), Playwright (e2e)

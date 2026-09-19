@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { generateContentMock } = vi.hoisted(() => ({
-  generateContentMock: vi.fn(),
+const { chatCompletionMock } = vi.hoisted(() => ({
+  chatCompletionMock: vi.fn(),
 }));
 
 vi.mock("@/lib/ai/client", () => ({
-  getGenAIClient: () => ({ models: { generateContent: generateContentMock } }),
+  getAiClient: () => ({ chatCompletion: chatCompletionMock }),
 }));
 
 import { POST } from "@/app/api/brief/route";
@@ -30,6 +30,20 @@ const analysis = {
   disclaimer: "This tool gives information, not legal advice.",
 };
 
+/** Builds a fetch-style Response whose body streams a single SSE content delta. */
+function jsonResponse(content: string): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const chunk = { choices: [{ delta: { content } }] };
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+  return new Response(body, { status: 200 });
+}
+
 function buildRequest(body: Record<string, unknown>): Request {
   return new Request("http://localhost/api/brief", {
     method: "POST",
@@ -40,18 +54,20 @@ function buildRequest(body: Record<string, unknown>): Request {
 
 describe("POST /api/brief", () => {
   beforeEach(() => {
-    generateContentMock.mockReset();
+    chatCompletionMock.mockReset();
   });
 
   it("returns a brief with a generation timestamp", async () => {
-    generateContentMock.mockResolvedValue({
-      text: JSON.stringify({
-        keyRisks: ["The late fee is uncapped and can grow indefinitely."],
-        questionsForLawyer: ["Is the uncapped late fee enforceable in my state?"],
-        documentsToGather: ["Prior correspondence about late payments"],
-        deadlines: ["None found in the document"],
-      }),
-    });
+    chatCompletionMock.mockResolvedValue(
+      jsonResponse(
+        JSON.stringify({
+          keyRisks: ["The late fee is uncapped and can grow indefinitely."],
+          questionsForLawyer: ["Is the uncapped late fee enforceable in my state?"],
+          documentsToGather: ["Prior correspondence about late payments"],
+          deadlines: ["None found in the document"],
+        }),
+      ),
+    );
 
     const before = Date.now();
     const response = await POST(buildRequest({ analysis }));
@@ -64,14 +80,16 @@ describe("POST /api/brief", () => {
   });
 
   it("passes qaHistory through into the prompt", async () => {
-    generateContentMock.mockResolvedValue({
-      text: JSON.stringify({
-        keyRisks: [],
-        questionsForLawyer: [],
-        documentsToGather: [],
-        deadlines: ["None found in the document"],
-      }),
-    });
+    chatCompletionMock.mockResolvedValue(
+      jsonResponse(
+        JSON.stringify({
+          keyRisks: [],
+          questionsForLawyer: [],
+          documentsToGather: [],
+          deadlines: ["None found in the document"],
+        }),
+      ),
+    );
 
     await POST(
       buildRequest({
@@ -80,8 +98,11 @@ describe("POST /api/brief", () => {
       }),
     );
 
-    const callArgs = generateContentMock.mock.calls[0]![0] as { contents: string };
-    expect(callArgs.contents).toContain("What if I pay late?");
+    const callArgs = chatCompletionMock.mock.calls[0]![0] as {
+      messages: { role: string; content: string }[];
+    };
+    const userMessage = callArgs.messages.find((m) => m.role === "user")!;
+    expect(userMessage.content).toContain("What if I pay late?");
   });
 
   it("returns 400 for a missing analysis", async () => {
@@ -89,7 +110,7 @@ describe("POST /api/brief", () => {
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body.error.code).toBe("invalid_request");
-    expect(generateContentMock).not.toHaveBeenCalled();
+    expect(chatCompletionMock).not.toHaveBeenCalled();
   });
 
   it("returns 400 for malformed JSON", async () => {
@@ -103,7 +124,7 @@ describe("POST /api/brief", () => {
   });
 
   it("returns 502 when the model call fails", async () => {
-    generateContentMock.mockRejectedValue(new Error("boom"));
+    chatCompletionMock.mockRejectedValue(new Error("boom"));
     const response = await POST(buildRequest({ analysis }));
     expect(response.status).toBe(502);
   });

@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { generateContentStreamMock } = vi.hoisted(() => ({
-  generateContentStreamMock: vi.fn(),
+const { chatCompletionMock } = vi.hoisted(() => ({
+  chatCompletionMock: vi.fn(),
 }));
 
 vi.mock("@/lib/ai/client", () => ({
-  getGenAIClient: () => ({ models: { generateContentStream: generateContentStreamMock } }),
+  getAiClient: () => ({ chatCompletion: chatCompletionMock }),
 }));
 
 import { generateStreamingText } from "@/lib/ai/generateStreamingText";
@@ -16,9 +16,25 @@ async function collect(gen: AsyncGenerator<string>): Promise<string[]> {
   return out;
 }
 
+/** Builds a fetch-style Response whose body streams OpenAI-style SSE delta chunks. */
+function sseResponse(contents: (string | undefined)[]): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const content of contents) {
+        const chunk = { choices: [{ delta: content === undefined ? {} : { content } }] };
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+      }
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+  return new Response(body, { status: 200 });
+}
+
 describe("generateStreamingText", () => {
   beforeEach(() => {
-    generateContentStreamMock.mockReset();
+    chatCompletionMock.mockReset();
   });
 
   afterEach(() => {
@@ -26,49 +42,41 @@ describe("generateStreamingText", () => {
   });
 
   it("yields each chunk's text in order", async () => {
-    generateContentStreamMock.mockResolvedValue(
-      (async function* () {
-        yield { text: "Hello" };
-        yield { text: " world" };
-      })(),
-    );
+    chatCompletionMock.mockResolvedValue(sseResponse(["Hello", " world"]));
 
-    const chunks = await collect(
-      generateStreamingText({ prompt: "p", systemInstruction: "s" }),
-    );
+    const chunks = await collect(generateStreamingText({ prompt: "p", systemInstruction: "s" }));
     expect(chunks).toEqual(["Hello", " world"]);
   });
 
   it("skips chunks with no text", async () => {
-    generateContentStreamMock.mockResolvedValue(
-      (async function* () {
-        yield { text: "a" };
-        yield { text: "" };
-        yield { text: undefined };
-        yield { text: "b" };
-      })(),
-    );
+    chatCompletionMock.mockResolvedValue(sseResponse(["a", "", undefined, "b"]));
 
-    const chunks = await collect(
-      generateStreamingText({ prompt: "p", systemInstruction: "s" }),
-    );
+    const chunks = await collect(generateStreamingText({ prompt: "p", systemInstruction: "s" }));
     expect(chunks).toEqual(["a", "b"]);
   });
 
   it("throws request_failed when the model call rejects", async () => {
-    generateContentStreamMock.mockRejectedValue(new Error("network down"));
+    chatCompletionMock.mockRejectedValue(new Error("network down"));
 
     await expect(
       collect(generateStreamingText({ prompt: "p", systemInstruction: "s" })),
     ).rejects.toMatchObject({ code: "request_failed" });
   });
 
-  it("throws timeout when the request exceeds 60 seconds", async () => {
+  it("throws request_failed when the response status is not ok", async () => {
+    chatCompletionMock.mockResolvedValue(new Response(null, { status: 500 }));
+
+    await expect(
+      collect(generateStreamingText({ prompt: "p", systemInstruction: "s" })),
+    ).rejects.toMatchObject({ code: "request_failed" });
+  });
+
+  it("throws timeout when the stream goes idle", async () => {
     vi.useFakeTimers();
-    generateContentStreamMock.mockImplementation(
-      (params: { config?: { abortSignal?: AbortSignal } }) =>
+    chatCompletionMock.mockImplementation(
+      (params: { signal?: AbortSignal }) =>
         new Promise((_resolve, reject) => {
-          params.config?.abortSignal?.addEventListener("abort", () => {
+          params.signal?.addEventListener("abort", () => {
             reject(new DOMException("aborted", "AbortError"));
           });
         }),
@@ -77,7 +85,7 @@ describe("generateStreamingText", () => {
     const promise = collect(generateStreamingText({ prompt: "p", systemInstruction: "s" }));
     const assertion = expect(promise).rejects.toMatchObject({ code: "timeout" });
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(30_000);
 
     await assertion;
   });

@@ -21,12 +21,12 @@ describe("wrapDocument with a prompt-injection attempt", () => {
   });
 });
 
-const { generateContentMock } = vi.hoisted(() => ({
-  generateContentMock: vi.fn(),
+const { chatCompletionMock } = vi.hoisted(() => ({
+  chatCompletionMock: vi.fn(),
 }));
 
 vi.mock("@/lib/ai/client", () => ({
-  getGenAIClient: () => ({ models: { generateContent: generateContentMock } }),
+  getAiClient: () => ({ chatCompletion: chatCompletionMock }),
 }));
 
 import { POST } from "@/app/api/analyze/route";
@@ -39,28 +39,41 @@ function buildRequest(content: string): Request {
 
 describe("POST /api/analyze with a document containing a prompt-injection attempt", () => {
   beforeEach(() => {
-    generateContentMock.mockReset();
+    chatCompletionMock.mockReset();
   });
 
   it("sends the injected text to the model wrapped in document delimiters, never as raw instructions", async () => {
-    generateContentMock.mockResolvedValue({
-      text: JSON.stringify({
-        docTitle: "Suspicious Document",
-        parties: [],
-        summary: "x",
-        clauses: [],
-        missingCommonClauses: [],
-      }),
+    const content = JSON.stringify({
+      docTitle: "Suspicious Document",
+      parties: [],
+      summary: "x",
+      clauses: [],
+      missingCommonClauses: [],
     });
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const chunk = { choices: [{ delta: { content } }] };
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      },
+    });
+    chatCompletionMock.mockResolvedValue(new Response(body, { status: 200 }));
 
     const documentText = `AGREEMENT\n\n${INJECTION_TEXT}\n\n1. RENT. Tenant pays $1,000.`;
     await POST(buildRequest(documentText));
 
-    expect(generateContentMock).toHaveBeenCalledTimes(1);
-    const callArgs = generateContentMock.mock.calls[0]![0] as { contents: string };
+    expect(chatCompletionMock).toHaveBeenCalledTimes(1);
+    const callArgs = chatCompletionMock.mock.calls[0]![0] as {
+      messages: { role: string; content: string }[];
+    };
+    const userMessage = callArgs.messages.find((m) => m.role === "user")!;
 
     // The whole document, injection included, must be wrapped in the
     // delimiter tags in the actual prompt sent to the model.
-    expect(callArgs.contents).toContain(`${DOCUMENT_TAG_OPEN}\n${documentText}\n${DOCUMENT_TAG_CLOSE}`);
+    expect(userMessage.content).toContain(
+      `${DOCUMENT_TAG_OPEN}\n${documentText}\n${DOCUMENT_TAG_CLOSE}`,
+    );
   });
 });

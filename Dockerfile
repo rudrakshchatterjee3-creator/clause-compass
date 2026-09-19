@@ -13,8 +13,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # Dummy values so build-time env validation (src/lib/env.ts) passes; the
 # real secret is injected at deploy time (see scripts/deploy.sh).
-ENV GEMINI_API_KEY=build-time-placeholder
-ENV GEMINI_MODEL=gemini-2.5-flash
+ENV GROQ_API_KEY=build-time-placeholder
+ENV GROQ_MODEL=build-time-placeholder
 RUN npm run build
 
 # ---- runner: minimal, non-root runtime image ----

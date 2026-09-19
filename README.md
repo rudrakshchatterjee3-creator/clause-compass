@@ -77,7 +77,7 @@ flowchart TB
         Cache[LruCache]
     end
 
-    Gemini[("Gemini API<br/>@google/genai")]
+    Groq[("Groq<br/>OpenAI-compatible chat API")]
 
     UI -- "multipart / JSON" --> Analyze
     UI -- "multipart / JSON" --> Ask
@@ -91,12 +91,12 @@ flowchart TB
 
     Analyze --> Extract --> Redact
     Compare --> Extract
-    Redact -- "prompt (redacted)" --> Gemini
-    Ask -- "prompt (redacted)" --> Gemini
-    Compare -- "prompt (redacted)" --> Gemini
-    Brief -- "prompt" --> Gemini
+    Redact -- "prompt (redacted)" --> Groq
+    Ask -- "prompt (redacted)" --> Groq
+    Compare -- "prompt (redacted)" --> Groq
+    Brief -- "prompt" --> Groq
 
-    Gemini -- "structured JSON, zod-validated" --> Ground
+    Groq -- "structured JSON, zod-validated" --> Ground
     Ground -- "verified quotes + offsets" --> Analyze
     Ground --> Ask
     Ground --> Compare
@@ -162,7 +162,7 @@ mix-up gets caught rather than silently passing.
   not a substitute for a gateway-level rate limiter.
 - **No secrets on the client.** `src/lib/env.ts` and every module under `src/lib/ai/` are marked
   `server-only`; importing one from a client component fails the build. Verified by grepping the
-  production client bundle for the API key and the Gemini SDK — neither appears.
+  production client bundle for the API key and the Groq base URL — neither appears.
 - **Typed, content-free errors.** Every route returns `{ error: { code, message } }` with a
   correct status code, never a raw stack trace. Server-side logging
   (`src/lib/security/logger.ts`) records only the route name, error code, and status — never
@@ -189,12 +189,12 @@ mix-up gets caught rather than silently passing.
 ## Testing
 
 - **Unit/integration (Vitest):** the entire pure core — schemas, text extraction, grounding,
-  redaction, rate limiting, the Gemini client wrapper, and every API route with the model call
+  redaction, rate limiting, the Groq client wrapper, and every API route with the model call
   mocked (valid response, invalid-then-retry, total failure, oversized input, wrong MIME type,
-  and the cross-document grounding check). ~190 tests, run with `npm run test`.
+  and the cross-document grounding check). ~200 tests, run with `npm run test`.
 - **End-to-end (Playwright):** full user flows — upload → clause list → click-to-highlight in
   both directions; ask a question → cited answer; compare against a baseline; generate a brief —
-  with `/api/*` mocked via route interception, so e2e runs need no real Gemini key. Includes the
+  with `/api/*` mocked via route interception, so e2e runs need no real Groq key. Includes the
   five axe-core accessibility scans and explicit 375px-viewport checks. Run with
   `npm run test:e2e`.
 
@@ -202,7 +202,7 @@ mix-up gets caught rather than silently passing.
 
 ```bash
 npm install
-cp .env.example .env.local   # fill in GEMINI_API_KEY
+cp .env.example .env.local   # fill in GROQ_API_KEY
 npm run dev
 ```
 

@@ -1,40 +1,59 @@
 import "server-only";
-import { getGenAIClient } from "./client";
+import { getAiClient } from "./client";
 import { AiError } from "./generateStructured";
-import { env } from "@/lib/env";
+import { readSseData } from "./sse";
+import { createIdleTimeoutController } from "./idleTimeout";
 
-const TIMEOUT_MS = 60_000;
+// An idle timeout (no bytes for this long) rather than a fixed total
+// deadline: a real answer streams token-by-token for its whole duration, so
+// only a stream that's gone quiet should be treated as stuck.
+const IDLE_TIMEOUT_MS = 30_000;
+const MAX_TOTAL_MS = 90_000;
 
 export interface GenerateStreamingTextOptions {
   prompt: string;
   systemInstruction: string;
 }
 
-/** Streams plain-text chunks from Gemini (no JSON mode) as they arrive. */
+interface ChatCompletionChunk {
+  choices?: { delta?: { content?: string } }[];
+}
+
+/** Streams plain-text chunks from the model (no JSON mode) as they arrive. */
 export async function* generateStreamingText({
   prompt,
   systemInstruction,
 }: GenerateStreamingTextOptions): AsyncGenerator<string> {
-  const client = getGenAIClient();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const client = getAiClient();
+  const timers = createIdleTimeoutController(IDLE_TIMEOUT_MS, MAX_TOTAL_MS);
 
   try {
-    const stream = await client.models.generateContentStream({
-      model: env.GEMINI_MODEL,
-      contents: prompt,
-      config: { systemInstruction, abortSignal: controller.signal },
+    const response = await client.chatCompletion({
+      messages: [
+        { role: "system", content: systemInstruction },
+        { role: "user", content: prompt },
+      ],
+      stream: true,
+      signal: timers.signal,
     });
 
-    for await (const chunk of stream) {
-      if (chunk.text) yield chunk.text;
+    if (!response.ok || !response.body) {
+      throw new AiError("request_failed", `Model request failed with status ${response.status}`);
+    }
+
+    for await (const payload of readSseData(response.body)) {
+      timers.resetIdle();
+      const chunk = JSON.parse(payload) as ChatCompletionChunk;
+      const text = chunk.choices?.[0]?.delta?.content;
+      if (text) yield text;
     }
   } catch (error) {
-    if (controller.signal.aborted) {
+    if (error instanceof AiError) throw error;
+    if (timers.signal.aborted) {
       throw new AiError("timeout", "Model request timed out");
     }
     throw new AiError("request_failed", "Model request failed", { cause: error });
   } finally {
-    clearTimeout(timeout);
+    timers.clear();
   }
 }

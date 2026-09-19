@@ -1,10 +1,16 @@
 import "server-only";
 import type { ZodType } from "zod";
-import { getGenAIClient } from "./client";
-import { zodToGeminiSchema } from "./zodToGeminiSchema";
-import { env } from "@/lib/env";
+import { getAiClient } from "./client";
+import { zodToJsonSchema } from "./zodToJsonSchema";
+import { readSseData } from "./sse";
+import { createIdleTimeoutController } from "./idleTimeout";
 
-const TIMEOUT_MS = 60_000;
+// A full document analysis completes in single-digit seconds on Groq in
+// practice; these are generous ceilings for network hiccups, not the
+// expected case. See generateStreamingText.ts for the idle-vs-total
+// rationale.
+const IDLE_TIMEOUT_MS = 30_000;
+const MAX_TOTAL_MS = 90_000;
 
 export type AiErrorCode = "invalid_response" | "request_failed" | "timeout";
 
@@ -29,10 +35,11 @@ export async function generateStructured<T>({
   prompt,
   systemInstruction,
 }: GenerateStructuredOptions<T>): Promise<T> {
-  const responseSchema = zodToGeminiSchema(schema);
+  const jsonSchema = zodToJsonSchema(schema);
+  const systemWithSchema = `${systemInstruction}\n\nRespond with a single JSON object matching exactly this JSON Schema, with no other text:\n${JSON.stringify(jsonSchema)}`;
 
   try {
-    return await attempt(schema, prompt, systemInstruction, responseSchema);
+    return await attempt(schema, prompt, systemWithSchema);
   } catch (firstError) {
     if (!(firstError instanceof AiError) || firstError.code !== "invalid_response") {
       throw firstError;
@@ -40,7 +47,7 @@ export async function generateStructured<T>({
 
     const retryPrompt = `${prompt}\n\n---\nYour previous response failed validation with this error:\n${firstError.message}\n\nFix the issue and return JSON that matches the required schema exactly.`;
 
-    return attempt(schema, retryPrompt, systemInstruction, responseSchema);
+    return attempt(schema, retryPrompt, systemWithSchema);
   }
 }
 
@@ -48,9 +55,8 @@ async function attempt<T>(
   schema: ZodType<T>,
   prompt: string,
   systemInstruction: string,
-  responseSchema: ReturnType<typeof zodToGeminiSchema>,
 ): Promise<T> {
-  const raw = await callModel(prompt, systemInstruction, responseSchema);
+  const raw = await callModel(prompt, systemInstruction);
 
   let json: unknown;
   try {
@@ -67,39 +73,48 @@ async function attempt<T>(
   return parsed.data;
 }
 
-async function callModel(
-  prompt: string,
-  systemInstruction: string,
-  responseSchema: ReturnType<typeof zodToGeminiSchema>,
-): Promise<string> {
-  const client = getGenAIClient();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+interface ChatCompletionChunk {
+  choices?: { delta?: { content?: string } }[];
+}
+
+async function callModel(prompt: string, systemInstruction: string): Promise<string> {
+  const client = getAiClient();
+  const timers = createIdleTimeoutController(IDLE_TIMEOUT_MS, MAX_TOTAL_MS);
 
   try {
-    const response = await client.models.generateContent({
-      model: env.GEMINI_MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema,
-        abortSignal: controller.signal,
-      },
+    const response = await client.chatCompletion({
+      messages: [
+        { role: "system", content: systemInstruction },
+        { role: "user", content: prompt },
+      ],
+      jsonMode: true,
+      stream: true,
+      signal: timers.signal,
     });
 
-    const text = response.text;
+    if (!response.ok || !response.body) {
+      throw new AiError("request_failed", `Model request failed with status ${response.status}`);
+    }
+
+    let text = "";
+    for await (const payload of readSseData(response.body)) {
+      timers.resetIdle();
+      const chunk = JSON.parse(payload) as ChatCompletionChunk;
+      const delta = chunk.choices?.[0]?.delta?.content;
+      if (delta) text += delta;
+    }
+
     if (!text) {
       throw new AiError("invalid_response", "Model returned an empty response");
     }
     return text;
   } catch (error) {
     if (error instanceof AiError) throw error;
-    if (controller.signal.aborted) {
+    if (timers.signal.aborted) {
       throw new AiError("timeout", "Model request timed out");
     }
     throw new AiError("request_failed", "Model request failed", { cause: error });
   } finally {
-    clearTimeout(timeout);
+    timers.clear();
   }
 }

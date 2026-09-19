@@ -1,17 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { generateContentStreamMock, generateContentMock } = vi.hoisted(() => ({
-  generateContentStreamMock: vi.fn(),
-  generateContentMock: vi.fn(),
+const { chatCompletionMock } = vi.hoisted(() => ({
+  chatCompletionMock: vi.fn(),
 }));
 
 vi.mock("@/lib/ai/client", () => ({
-  getGenAIClient: () => ({
-    models: {
-      generateContentStream: generateContentStreamMock,
-      generateContent: generateContentMock,
-    },
-  }),
+  getAiClient: () => ({ chatCompletion: chatCompletionMock }),
 }));
 
 import { POST } from "@/app/api/ask/route";
@@ -27,10 +21,37 @@ function buildRequest(body: Record<string, unknown>): Request {
   });
 }
 
-function textChunks(...chunks: string[]) {
-  return (async function* () {
-    for (const chunk of chunks) yield { text: chunk };
-  })();
+/** Builds a fetch-style Response whose body streams OpenAI-style SSE delta chunks. */
+function sseResponse(...chunks: string[]): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const content of chunks) {
+        const chunk = { choices: [{ delta: { content } }] };
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+      }
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+  return new Response(body, { status: 200 });
+}
+
+/** A single-chunk SSE response — generateStructured also streams internally now. */
+function jsonResponse(content: string): Response {
+  return sseResponse(content);
+}
+
+/** Routes the mocked chatCompletion call by its `jsonMode` flag, matching the route's two calls. */
+function mockChatCompletion(options: {
+  stream?: Response | (() => Promise<Response>);
+  structured?: Response | (() => Promise<Response>);
+}): void {
+  chatCompletionMock.mockImplementation(async (params: { jsonMode?: boolean }) => {
+    const handler = params.jsonMode ? options.structured : options.stream;
+    if (!handler) throw new Error("unexpected chatCompletion call");
+    return typeof handler === "function" ? handler() : handler;
+  });
 }
 
 async function readEvents(response: Response): Promise<unknown[]> {
@@ -44,21 +65,20 @@ async function readEvents(response: Response): Promise<unknown[]> {
 
 describe("POST /api/ask", () => {
   beforeEach(() => {
-    generateContentStreamMock.mockReset();
-    generateContentMock.mockReset();
+    chatCompletionMock.mockReset();
   });
 
   it("streams answer chunks then a verified result", async () => {
-    generateContentStreamMock.mockResolvedValue(
-      textChunks("You pay ", "$1,200 rent monthly."),
-    );
-    generateContentMock.mockResolvedValue({
-      text: JSON.stringify({
-        answerable: true,
-        steps: [{ text: "Rent is due monthly.", quote: "pay $1,200 rent on the first" }],
-        confidence: "high",
-        suggestLawyer: false,
-      }),
+    mockChatCompletion({
+      stream: sseResponse("You pay ", "$1,200 rent monthly."),
+      structured: jsonResponse(
+        JSON.stringify({
+          answerable: true,
+          steps: [{ text: "Rent is due monthly.", quote: "pay $1,200 rent on the first" }],
+          confidence: "high",
+          suggestLawyer: false,
+        }),
+      ),
     });
 
     const response = await POST(buildRequest({ documentText: DOCUMENT_TEXT, question: "What if I pay rent?" }));
@@ -76,14 +96,16 @@ describe("POST /api/ask", () => {
   });
 
   it("marks a step unverified when its quote isn't in the document", async () => {
-    generateContentStreamMock.mockResolvedValue(textChunks("Some answer."));
-    generateContentMock.mockResolvedValue({
-      text: JSON.stringify({
-        answerable: true,
-        steps: [{ text: "x", quote: "this text is nowhere in the document" }],
-        confidence: "medium",
-        suggestLawyer: false,
-      }),
+    mockChatCompletion({
+      stream: sseResponse("Some answer."),
+      structured: jsonResponse(
+        JSON.stringify({
+          answerable: true,
+          steps: [{ text: "x", quote: "this text is nowhere in the document" }],
+          confidence: "medium",
+          suggestLawyer: false,
+        }),
+      ),
     });
 
     const response = await POST(buildRequest({ documentText: DOCUMENT_TEXT, question: "q" }));
@@ -93,9 +115,11 @@ describe("POST /api/ask", () => {
   });
 
   it("returns an unanswerable result when the document doesn't cover it", async () => {
-    generateContentStreamMock.mockResolvedValue(textChunks("The document doesn't say."));
-    generateContentMock.mockResolvedValue({
-      text: JSON.stringify({ answerable: false, steps: [], confidence: "low", suggestLawyer: true }),
+    mockChatCompletion({
+      stream: sseResponse("The document doesn't say."),
+      structured: jsonResponse(
+        JSON.stringify({ answerable: false, steps: [], confidence: "low", suggestLawyer: true }),
+      ),
     });
 
     const response = await POST(buildRequest({ documentText: DOCUMENT_TEXT, question: "q" }));
@@ -106,7 +130,9 @@ describe("POST /api/ask", () => {
   });
 
   it("emits an error event when the streaming call fails", async () => {
-    generateContentStreamMock.mockRejectedValue(new Error("boom"));
+    mockChatCompletion({
+      stream: () => Promise.reject(new Error("boom")),
+    });
 
     const response = await POST(buildRequest({ documentText: DOCUMENT_TEXT, question: "q" }));
     expect(response.status).toBe(200);
@@ -114,12 +140,13 @@ describe("POST /api/ask", () => {
     const events = await readEvents(response);
     expect(events).toHaveLength(1);
     expect((events[0] as { type: string }).type).toBe("error");
-    expect(generateContentMock).not.toHaveBeenCalled();
   });
 
   it("emits an error event when the detail call fails after streaming succeeds", async () => {
-    generateContentStreamMock.mockResolvedValue(textChunks("An answer."));
-    generateContentMock.mockRejectedValue(new Error("boom"));
+    mockChatCompletion({
+      stream: sseResponse("An answer."),
+      structured: () => Promise.reject(new Error("boom")),
+    });
 
     const response = await POST(buildRequest({ documentText: DOCUMENT_TEXT, question: "q" }));
     const events = await readEvents(response);
@@ -133,7 +160,7 @@ describe("POST /api/ask", () => {
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body.error.code).toBe("invalid_request");
-    expect(generateContentStreamMock).not.toHaveBeenCalled();
+    expect(chatCompletionMock).not.toHaveBeenCalled();
   });
 
   it("returns 400 for a question over 500 characters", async () => {
@@ -154,9 +181,11 @@ describe("POST /api/ask", () => {
   });
 
   it("redacts PII from the prompt by default and emits a redactions event", async () => {
-    generateContentStreamMock.mockResolvedValue(textChunks("An answer."));
-    generateContentMock.mockResolvedValue({
-      text: JSON.stringify({ answerable: true, steps: [], confidence: "low", suggestLawyer: false }),
+    mockChatCompletion({
+      stream: sseResponse("An answer."),
+      structured: jsonResponse(
+        JSON.stringify({ answerable: true, steps: [], confidence: "low", suggestLawyer: false }),
+      ),
     });
 
     const documentText = `${DOCUMENT_TEXT} Contact jane@example.com.`;
@@ -168,15 +197,20 @@ describe("POST /api/ask", () => {
       redactions: [{ type: "email", count: 1 }],
     });
 
-    const streamArgs = generateContentStreamMock.mock.calls[0]![0] as { contents: string };
-    expect(streamArgs.contents).toContain("[REDACTED_EMAIL]");
-    expect(streamArgs.contents).not.toContain("jane@example.com");
+    const streamArgs = chatCompletionMock.mock.calls[0]![0] as {
+      messages: { role: string; content: string }[];
+    };
+    const userMessage = streamArgs.messages.find((m) => m.role === "user")!;
+    expect(userMessage.content).toContain("[REDACTED_EMAIL]");
+    expect(userMessage.content).not.toContain("jane@example.com");
   });
 
   it("sends the original text when redactPii is explicitly disabled", async () => {
-    generateContentStreamMock.mockResolvedValue(textChunks("An answer."));
-    generateContentMock.mockResolvedValue({
-      text: JSON.stringify({ answerable: true, steps: [], confidence: "low", suggestLawyer: false }),
+    mockChatCompletion({
+      stream: sseResponse("An answer."),
+      structured: jsonResponse(
+        JSON.stringify({ answerable: true, steps: [], confidence: "low", suggestLawyer: false }),
+      ),
     });
 
     const documentText = `${DOCUMENT_TEXT} Contact jane@example.com.`;
@@ -186,7 +220,10 @@ describe("POST /api/ask", () => {
     const events = await readEvents(response);
 
     expect(events[0]).not.toMatchObject({ type: "redactions" });
-    const streamArgs = generateContentStreamMock.mock.calls[0]![0] as { contents: string };
-    expect(streamArgs.contents).toContain("jane@example.com");
+    const streamArgs = chatCompletionMock.mock.calls[0]![0] as {
+      messages: { role: string; content: string }[];
+    };
+    const userMessage = streamArgs.messages.find((m) => m.role === "user")!;
+    expect(userMessage.content).toContain("jane@example.com");
   });
 });

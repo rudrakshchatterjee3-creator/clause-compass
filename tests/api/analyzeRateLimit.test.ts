@@ -3,12 +3,12 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 // Isolated in its own file so this test's module import gets a fresh
 // RateLimiter instance, unaffected by the many requests analyze.test.ts
 // sends against the same in-memory limiter.
-const { generateContentMock } = vi.hoisted(() => ({
-  generateContentMock: vi.fn(),
+const { chatCompletionMock } = vi.hoisted(() => ({
+  chatCompletionMock: vi.fn(),
 }));
 
 vi.mock("@/lib/ai/client", () => ({
-  getGenAIClient: () => ({ models: { generateContent: generateContentMock } }),
+  getAiClient: () => ({ chatCompletion: chatCompletionMock }),
 }));
 
 import { POST } from "@/app/api/analyze/route";
@@ -25,14 +25,26 @@ function buildRequest(content: string): Request {
 
 describe("POST /api/analyze rate limiting", () => {
   beforeAll(() => {
-    generateContentMock.mockResolvedValue({
-      text: JSON.stringify({
+    // A fresh Response per call: bodies are single-use and this test makes
+    // 10 real model calls reusing the same mock.
+    chatCompletionMock.mockImplementation(async () => {
+      const content = JSON.stringify({
         docTitle: "x",
         parties: [],
         summary: "x",
         clauses: [],
         missingCommonClauses: [],
-      }),
+      });
+      const encoder = new TextEncoder();
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const chunk = { choices: [{ delta: { content } }] };
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        },
+      });
+      return new Response(body, { status: 200 });
     });
   });
 

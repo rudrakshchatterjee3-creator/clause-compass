@@ -1,2 +1,2 @@
-process.env.GEMINI_API_KEY ??= "test-gemini-api-key";
-process.env.GEMINI_MODEL ??= "gemini-test-model";
+process.env.GROQ_API_KEY ??= "test-groq-api-key";
+process.env.GROQ_MODEL ??= "groq-test-model";

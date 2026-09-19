@@ -1,17 +1,38 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { generateContentMock } = vi.hoisted(() => ({
-  generateContentMock: vi.fn(),
+const { chatCompletionMock } = vi.hoisted(() => ({
+  chatCompletionMock: vi.fn(),
 }));
 
 vi.mock("@/lib/ai/client", () => ({
-  getGenAIClient: () => ({ models: { generateContent: generateContentMock } }),
+  getAiClient: () => ({ chatCompletion: chatCompletionMock }),
 }));
 
 import { POST } from "@/app/api/compare/route";
 
 const DOC_A = "The tenant shall pay a $25 late fee. Pets are not allowed on the premises.";
 const DOC_B = "The tenant shall pay a $50 late fee. Pets are allowed with a deposit.";
+
+/** Builds a fetch-style Response whose body streams a single SSE content delta. */
+function jsonResponse(content: string): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const chunk = { choices: [{ delta: { content } }] };
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+  return new Response(body, { status: 200 });
+}
+
+function userMessageContent(callIndex: number): string {
+  const args = chatCompletionMock.mock.calls[callIndex]![0] as {
+    messages: { role: string; content: string }[];
+  };
+  return args.messages.find((m) => m.role === "user")!.content;
+}
 
 function buildRequest(fields: Record<string, string>, fileB?: { content: string; name: string; type: string }): Request {
   const formData = new FormData();
@@ -24,33 +45,35 @@ function buildRequest(fields: Record<string, string>, fileB?: { content: string;
 
 describe("POST /api/compare", () => {
   beforeEach(() => {
-    generateContentMock.mockReset();
+    chatCompletionMock.mockReset();
   });
 
   it("aligns clauses and verifies each quote against its own document", async () => {
-    generateContentMock.mockResolvedValue({
-      text: JSON.stringify({
-        items: [
-          {
-            topic: "Late fee",
-            status: "changed",
-            docAQuote: "$25 late fee",
-            docBQuote: "$50 late fee",
-            explanation: "The late fee doubled.",
-            favours: "A",
-          },
-          {
-            topic: "Pets",
-            status: "changed",
-            docAQuote: "Pets are not allowed on the premises.",
-            docBQuote: "Pets are allowed with a deposit.",
-            explanation: "Document B allows pets.",
-            favours: "B",
-          },
-        ],
-        summary: "Document B raises the late fee but allows pets.",
-      }),
-    });
+    chatCompletionMock.mockResolvedValue(
+      jsonResponse(
+        JSON.stringify({
+          items: [
+            {
+              topic: "Late fee",
+              status: "changed",
+              docAQuote: "$25 late fee",
+              docBQuote: "$50 late fee",
+              explanation: "The late fee doubled.",
+              favours: "A",
+            },
+            {
+              topic: "Pets",
+              status: "changed",
+              docAQuote: "Pets are not allowed on the premises.",
+              docBQuote: "Pets are allowed with a deposit.",
+              explanation: "Document B allows pets.",
+              favours: "B",
+            },
+          ],
+          summary: "Document B raises the late fee but allows pets.",
+        }),
+      ),
+    );
 
     const response = await POST(
       buildRequest({ documentTextA: DOC_A }, { content: DOC_B, name: "b.txt", type: "text/plain" }),
@@ -69,22 +92,24 @@ describe("POST /api/compare", () => {
   });
 
   it("marks a quote unverified when it doesn't actually appear in its claimed document (cross-document alignment check)", async () => {
-    generateContentMock.mockResolvedValue({
-      text: JSON.stringify({
-        items: [
-          {
-            topic: "Late fee",
-            // docAQuote actually only exists in DOC_B, not DOC_A — the model got it backwards.
-            docAQuote: "$50 late fee",
-            docBQuote: "$50 late fee",
-            status: "same",
-            explanation: "x",
-            favours: "neutral",
-          },
-        ],
-        summary: "x",
-      }),
-    });
+    chatCompletionMock.mockResolvedValue(
+      jsonResponse(
+        JSON.stringify({
+          items: [
+            {
+              topic: "Late fee",
+              // docAQuote actually only exists in DOC_B, not DOC_A — the model got it backwards.
+              docAQuote: "$50 late fee",
+              docBQuote: "$50 late fee",
+              status: "same",
+              explanation: "x",
+              favours: "neutral",
+            },
+          ],
+          summary: "x",
+        }),
+      ),
+    );
 
     const response = await POST(
       buildRequest(
@@ -99,9 +124,9 @@ describe("POST /api/compare", () => {
   });
 
   it("compares against a bundled baseline instead of a second file", async () => {
-    generateContentMock.mockResolvedValue({
-      text: JSON.stringify({ items: [], summary: "No notable differences." }),
-    });
+    chatCompletionMock.mockResolvedValue(
+      jsonResponse(JSON.stringify({ items: [], summary: "No notable differences." })),
+    );
 
     const response = await POST(
       buildRequest({ documentTextA: DOC_A, baselineId: "residential-lease-fair" }),
@@ -114,7 +139,7 @@ describe("POST /api/compare", () => {
   it("returns 400 for an unknown baseline id", async () => {
     const response = await POST(buildRequest({ documentTextA: DOC_A, baselineId: "not-real" }));
     expect(response.status).toBe(400);
-    expect(generateContentMock).not.toHaveBeenCalled();
+    expect(chatCompletionMock).not.toHaveBeenCalled();
   });
 
   it("returns 400 when neither fileB nor baselineId is provided", async () => {
@@ -130,7 +155,7 @@ describe("POST /api/compare", () => {
       ),
     );
     expect(response.status).toBe(400);
-    expect(generateContentMock).not.toHaveBeenCalled();
+    expect(chatCompletionMock).not.toHaveBeenCalled();
   });
 
   it("returns 413 when the combined document size exceeds the limit", async () => {
@@ -139,11 +164,11 @@ describe("POST /api/compare", () => {
       buildRequest({ documentTextA: big }, { content: "b".repeat(90_000), name: "b.txt", type: "text/plain" }),
     );
     expect(response.status).toBe(413);
-    expect(generateContentMock).not.toHaveBeenCalled();
+    expect(chatCompletionMock).not.toHaveBeenCalled();
   });
 
   it("returns 502 when the model call fails", async () => {
-    generateContentMock.mockRejectedValue(new Error("boom"));
+    chatCompletionMock.mockRejectedValue(new Error("boom"));
 
     const response = await POST(
       buildRequest(
@@ -155,9 +180,7 @@ describe("POST /api/compare", () => {
   });
 
   it("redacts PII from both documents before sending them to the model, by default", async () => {
-    generateContentMock.mockResolvedValue({
-      text: JSON.stringify({ items: [], summary: "x" }),
-    });
+    chatCompletionMock.mockResolvedValue(jsonResponse(JSON.stringify({ items: [], summary: "x" })));
 
     const response = await POST(
       buildRequest(
@@ -167,9 +190,9 @@ describe("POST /api/compare", () => {
     );
     expect(response.status).toBe(200);
 
-    const callArgs = generateContentMock.mock.calls[0]![0] as { contents: string };
-    expect(callArgs.contents).toContain("[REDACTED_EMAIL]");
-    expect(callArgs.contents).not.toContain("jane@example.com");
+    const sentContent = userMessageContent(0);
+    expect(sentContent).toContain("[REDACTED_EMAIL]");
+    expect(sentContent).not.toContain("jane@example.com");
 
     const body = await response.json();
     expect(body.redactions).toEqual([{ type: "email", count: 1 }]);
@@ -177,9 +200,7 @@ describe("POST /api/compare", () => {
   });
 
   it("sends the original text when redactPii is explicitly disabled", async () => {
-    generateContentMock.mockResolvedValue({
-      text: JSON.stringify({ items: [], summary: "x" }),
-    });
+    chatCompletionMock.mockResolvedValue(jsonResponse(JSON.stringify({ items: [], summary: "x" })));
 
     const response = await POST(
       buildRequest(
@@ -191,8 +212,8 @@ describe("POST /api/compare", () => {
       ),
     );
 
-    const callArgs = generateContentMock.mock.calls[0]![0] as { contents: string };
-    expect(callArgs.contents).toContain("jane@example.com");
+    const sentContent = userMessageContent(0);
+    expect(sentContent).toContain("jane@example.com");
 
     const body = await response.json();
     expect(body.redactions).toEqual([]);

@@ -1,21 +1,35 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { z } from "zod";
 
-const { generateContentMock } = vi.hoisted(() => ({
-  generateContentMock: vi.fn(),
+const { chatCompletionMock } = vi.hoisted(() => ({
+  chatCompletionMock: vi.fn(),
 }));
 
 vi.mock("@/lib/ai/client", () => ({
-  getGenAIClient: () => ({ models: { generateContent: generateContentMock } }),
+  getAiClient: () => ({ chatCompletion: chatCompletionMock }),
 }));
 
 import { generateStructured } from "@/lib/ai/generateStructured";
 
 const schema = z.object({ answer: z.string() });
 
+/** Builds a fetch-style Response whose body streams a single SSE content delta. */
+function sseResponse(content: string, status = 200): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const chunk = { choices: [{ delta: { content } }] };
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+  return new Response(body, { status });
+}
+
 describe("generateStructured", () => {
   beforeEach(() => {
-    generateContentMock.mockReset();
+    chatCompletionMock.mockReset();
   });
 
   afterEach(() => {
@@ -23,7 +37,7 @@ describe("generateStructured", () => {
   });
 
   it("returns parsed data on a valid first response", async () => {
-    generateContentMock.mockResolvedValue({ text: JSON.stringify({ answer: "hi" }) });
+    chatCompletionMock.mockResolvedValue(sseResponse(JSON.stringify({ answer: "hi" })));
 
     const result = await generateStructured({
       schema,
@@ -32,13 +46,16 @@ describe("generateStructured", () => {
     });
 
     expect(result).toEqual({ answer: "hi" });
-    expect(generateContentMock).toHaveBeenCalledTimes(1);
+    expect(chatCompletionMock).toHaveBeenCalledTimes(1);
+    const callArgs = chatCompletionMock.mock.calls[0]![0] as { jsonMode?: boolean; stream?: boolean };
+    expect(callArgs.jsonMode).toBe(true);
+    expect(callArgs.stream).toBe(true);
   });
 
   it("retries once with the validation error appended when json is invalid, then succeeds", async () => {
-    generateContentMock
-      .mockResolvedValueOnce({ text: "not json" })
-      .mockResolvedValueOnce({ text: JSON.stringify({ answer: "fixed" }) });
+    chatCompletionMock
+      .mockResolvedValueOnce(sseResponse("not json"))
+      .mockResolvedValueOnce(sseResponse(JSON.stringify({ answer: "fixed" })));
 
     const result = await generateStructured({
       schema,
@@ -47,15 +64,18 @@ describe("generateStructured", () => {
     });
 
     expect(result).toEqual({ answer: "fixed" });
-    expect(generateContentMock).toHaveBeenCalledTimes(2);
-    const secondCallArgs = generateContentMock.mock.calls[1]![0] as { contents: string };
-    expect(secondCallArgs.contents).toContain("failed validation");
+    expect(chatCompletionMock).toHaveBeenCalledTimes(2);
+    const secondCallArgs = chatCompletionMock.mock.calls[1]![0] as {
+      messages: { role: string; content: string }[];
+    };
+    const userMessage = secondCallArgs.messages.find((m) => m.role === "user");
+    expect(userMessage?.content).toContain("failed validation");
   });
 
   it("retries once when the schema doesn't match, then succeeds", async () => {
-    generateContentMock
-      .mockResolvedValueOnce({ text: JSON.stringify({ wrong: "field" }) })
-      .mockResolvedValueOnce({ text: JSON.stringify({ answer: "fixed" }) });
+    chatCompletionMock
+      .mockResolvedValueOnce(sseResponse(JSON.stringify({ wrong: "field" })))
+      .mockResolvedValueOnce(sseResponse(JSON.stringify({ answer: "fixed" })));
 
     const result = await generateStructured({
       schema,
@@ -64,41 +84,51 @@ describe("generateStructured", () => {
     });
 
     expect(result).toEqual({ answer: "fixed" });
-    expect(generateContentMock).toHaveBeenCalledTimes(2);
+    expect(chatCompletionMock).toHaveBeenCalledTimes(2);
   });
 
   it("throws a clean AiError after both attempts fail validation", async () => {
-    generateContentMock.mockResolvedValue({ text: "still not json" });
+    // A fresh Response per call: bodies are single-use and this retries once.
+    chatCompletionMock.mockImplementation(async () => sseResponse("still not json"));
 
     await expect(
       generateStructured({ schema, prompt: "prompt", systemInstruction: "system" }),
     ).rejects.toMatchObject({ code: "invalid_response" });
-    expect(generateContentMock).toHaveBeenCalledTimes(2);
+    expect(chatCompletionMock).toHaveBeenCalledTimes(2);
   });
 
   it("throws request_failed without retrying when the model call rejects", async () => {
-    generateContentMock.mockRejectedValue(new Error("network down"));
+    chatCompletionMock.mockRejectedValue(new Error("network down"));
 
     await expect(
       generateStructured({ schema, prompt: "prompt", systemInstruction: "system" }),
     ).rejects.toMatchObject({ code: "request_failed" });
-    expect(generateContentMock).toHaveBeenCalledTimes(1);
+    expect(chatCompletionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws request_failed when the response status is not ok", async () => {
+    chatCompletionMock.mockResolvedValue(sseResponse("ignored", 500));
+
+    await expect(
+      generateStructured({ schema, prompt: "prompt", systemInstruction: "system" }),
+    ).rejects.toMatchObject({ code: "request_failed" });
   });
 
   it("throws invalid_response when the model returns an empty response", async () => {
-    generateContentMock.mockResolvedValue({ text: "" });
+    // A fresh Response per call: this scenario also retries once.
+    chatCompletionMock.mockImplementation(async () => sseResponse(""));
 
     await expect(
       generateStructured({ schema, prompt: "prompt", systemInstruction: "system" }),
     ).rejects.toMatchObject({ code: "invalid_response" });
   });
 
-  it("throws timeout when the request exceeds 60 seconds", async () => {
+  it("throws timeout when the stream goes idle", async () => {
     vi.useFakeTimers();
-    generateContentMock.mockImplementation(
-      (params: { config?: { abortSignal?: AbortSignal } }) =>
+    chatCompletionMock.mockImplementation(
+      (params: { signal?: AbortSignal }) =>
         new Promise((_resolve, reject) => {
-          params.config?.abortSignal?.addEventListener("abort", () => {
+          params.signal?.addEventListener("abort", () => {
             reject(new DOMException("aborted", "AbortError"));
           });
         }),
@@ -107,7 +137,7 @@ describe("generateStructured", () => {
     const promise = generateStructured({ schema, prompt: "prompt", systemInstruction: "system" });
     const assertion = expect(promise).rejects.toMatchObject({ code: "timeout" });
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(30_000);
 
     await assertion;
   });
