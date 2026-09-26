@@ -49,6 +49,11 @@ export const viewport: Viewport = {
   themeColor: "#faf7f0",
 };
 
+// The CSP nonce in proxy.ts is regenerated on every request; a statically
+// prerendered page would bake in a build-time nonce that never matches it,
+// silently blocking every script (including hydration) in production.
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
