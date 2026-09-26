@@ -11,10 +11,8 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# Dummy values so build-time env validation (src/lib/env.ts) passes; the
-# real secret is injected at deploy time (see scripts/deploy.sh).
-ENV GROQ_API_KEY=build-time-placeholder
-ENV GROQ_MODEL=build-time-placeholder
+# No secrets needed at build time: env is validated lazily on first use (see
+# src/lib/env.ts). The real key is injected at deploy time (see scripts/deploy.sh).
 RUN npm run build
 
 # ---- runner: minimal, non-root runtime image ----

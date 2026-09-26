@@ -1,5 +1,5 @@
 import "server-only";
-import { env } from "@/lib/env";
+import { getEnv } from "@/lib/env";
 
 const GROQ_CHAT_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions";
 
@@ -41,6 +41,7 @@ export function getAiClient(): AiClient {
   if (!client) {
     client = {
       chatCompletion({ messages, stream, jsonMode, maxTokens, signal }) {
+        const env = getEnv();
         return fetch(GROQ_CHAT_COMPLETIONS_URL, {
           method: "POST",
           headers: {
