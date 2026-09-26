@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { z } from "zod";
+import { sseJsonResponse as sseResponse } from "../helpers/sseResponse";
 
 const { chatCompletionMock } = vi.hoisted(() => ({
   chatCompletionMock: vi.fn(),
@@ -12,20 +13,6 @@ vi.mock("@/lib/ai/client", () => ({
 import { generateStructured } from "@/lib/ai/generateStructured";
 
 const schema = z.object({ answer: z.string() });
-
-/** Builds a fetch-style Response whose body streams a single SSE content delta. */
-function sseResponse(content: string, status = 200): Response {
-  const encoder = new TextEncoder();
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const chunk = { choices: [{ delta: { content } }] };
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      controller.close();
-    },
-  });
-  return new Response(body, { status });
-}
 
 describe("generateStructured", () => {
   beforeEach(() => {

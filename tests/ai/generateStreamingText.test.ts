@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { sseStreamResponse } from "../helpers/sseResponse";
 
 const { chatCompletionMock } = vi.hoisted(() => ({
   chatCompletionMock: vi.fn(),
@@ -16,22 +17,6 @@ async function collect(gen: AsyncGenerator<string>): Promise<string[]> {
   return out;
 }
 
-/** Builds a fetch-style Response whose body streams OpenAI-style SSE delta chunks. */
-function sseResponse(contents: (string | undefined)[]): Response {
-  const encoder = new TextEncoder();
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const content of contents) {
-        const chunk = { choices: [{ delta: content === undefined ? {} : { content } }] };
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-      }
-      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      controller.close();
-    },
-  });
-  return new Response(body, { status: 200 });
-}
-
 describe("generateStreamingText", () => {
   beforeEach(() => {
     chatCompletionMock.mockReset();
@@ -42,14 +27,14 @@ describe("generateStreamingText", () => {
   });
 
   it("yields each chunk's text in order", async () => {
-    chatCompletionMock.mockResolvedValue(sseResponse(["Hello", " world"]));
+    chatCompletionMock.mockResolvedValue(sseStreamResponse(["Hello", " world"]));
 
     const chunks = await collect(generateStreamingText({ prompt: "p", systemInstruction: "s" }));
     expect(chunks).toEqual(["Hello", " world"]);
   });
 
   it("skips chunks with no text", async () => {
-    chatCompletionMock.mockResolvedValue(sseResponse(["a", "", undefined, "b"]));
+    chatCompletionMock.mockResolvedValue(sseStreamResponse(["a", "", undefined, "b"]));
 
     const chunks = await collect(generateStreamingText({ prompt: "p", systemInstruction: "s" }));
     expect(chunks).toEqual(["a", "b"]);

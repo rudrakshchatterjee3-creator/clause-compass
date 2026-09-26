@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { sseStreamResponse, sseJsonResponse } from "../helpers/sseResponse";
 
 const { chatCompletionMock } = vi.hoisted(() => ({
   chatCompletionMock: vi.fn(),
@@ -21,25 +22,14 @@ function buildRequest(body: Record<string, unknown>): Request {
   });
 }
 
-/** Builds a fetch-style Response whose body streams OpenAI-style SSE delta chunks. */
+/** Variadic convenience wrapper for the streamed-answer mocks below. */
 function sseResponse(...chunks: string[]): Response {
-  const encoder = new TextEncoder();
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const content of chunks) {
-        const chunk = { choices: [{ delta: { content } }] };
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-      }
-      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      controller.close();
-    },
-  });
-  return new Response(body, { status: 200 });
+  return sseStreamResponse(chunks);
 }
 
 /** A single-chunk SSE response — generateStructured also streams internally now. */
 function jsonResponse(content: string): Response {
-  return sseResponse(content);
+  return sseJsonResponse(content);
 }
 
 /** Routes the mocked chatCompletion call by its `jsonMode` flag, matching the route's two calls. */

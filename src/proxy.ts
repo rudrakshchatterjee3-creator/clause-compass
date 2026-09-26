@@ -26,5 +26,8 @@ export function proxy(request: NextRequest) {
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set("Content-Security-Policy", csp);
+  // The other static security headers (X-Content-Type-Options, X-Frame-Options,
+  // Referrer-Policy, Permissions-Policy) are set in next.config.ts instead —
+  // they don't vary per request, unlike this nonce.
   return response;
 }

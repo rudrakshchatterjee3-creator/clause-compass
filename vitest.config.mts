@@ -1,6 +1,8 @@
 import { defineConfig } from "vitest/config";
 import path from "node:path";
 
+const rootDir = import.meta.dirname;
+
 export default defineConfig({
   test: {
     environment: "node",
@@ -14,8 +16,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
-      "server-only": path.resolve(__dirname, "./node_modules/server-only/empty.js"),
+      "@": path.resolve(rootDir, "./src"),
+      "server-only": path.resolve(rootDir, "./node_modules/server-only/empty.js"),
     },
   },
 });

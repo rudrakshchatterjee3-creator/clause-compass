@@ -1,13 +1,14 @@
 import type { NextConfig } from "next";
 
-// Content-Security-Policy is set per-request (with a nonce) in src/middleware.ts instead,
+// Content-Security-Policy is set per-request (with a nonce) in src/proxy.ts instead,
 // since Next.js needs a nonce to allow its own inline hydration scripts under a strict CSP.
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   {
     key: "Permissions-Policy",
-    value: "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+    value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
   },
 ];
 

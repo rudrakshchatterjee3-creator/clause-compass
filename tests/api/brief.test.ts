@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { sseJsonResponse as jsonResponse } from "../helpers/sseResponse";
 
 const { chatCompletionMock } = vi.hoisted(() => ({
   chatCompletionMock: vi.fn(),
@@ -29,20 +30,6 @@ const analysis = {
   missingCommonClauses: ["Pet policy"],
   disclaimer: "This tool gives information, not legal advice.",
 };
-
-/** Builds a fetch-style Response whose body streams a single SSE content delta. */
-function jsonResponse(content: string): Response {
-  const encoder = new TextEncoder();
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const chunk = { choices: [{ delta: { content } }] };
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      controller.close();
-    },
-  });
-  return new Response(body, { status: 200 });
-}
 
 function buildRequest(body: Record<string, unknown>): Request {
   return new Request("http://localhost/api/brief", {

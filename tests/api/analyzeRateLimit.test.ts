@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
+import { sseJsonResponse } from "../helpers/sseResponse";
 
 // Isolated in its own file so this test's module import gets a fresh
 // RateLimiter instance, unaffected by the many requests analyze.test.ts
@@ -27,25 +28,17 @@ describe("POST /api/analyze rate limiting", () => {
   beforeAll(() => {
     // A fresh Response per call: bodies are single-use and this test makes
     // 10 real model calls reusing the same mock.
-    chatCompletionMock.mockImplementation(async () => {
-      const content = JSON.stringify({
-        docTitle: "x",
-        parties: [],
-        summary: "x",
-        clauses: [],
-        missingCommonClauses: [],
-      });
-      const encoder = new TextEncoder();
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          const chunk = { choices: [{ delta: { content } }] };
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-          controller.close();
-        },
-      });
-      return new Response(body, { status: 200 });
-    });
+    chatCompletionMock.mockImplementation(async () =>
+      sseJsonResponse(
+        JSON.stringify({
+          docTitle: "x",
+          parties: [],
+          summary: "x",
+          clauses: [],
+          missingCommonClauses: [],
+        }),
+      ),
+    );
   });
 
   it("allows 10 requests per minute per IP, then returns 429 with Retry-After", async () => {

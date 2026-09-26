@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { sseJsonResponse as jsonResponse } from "../helpers/sseResponse";
 
 const { chatCompletionMock } = vi.hoisted(() => ({
   chatCompletionMock: vi.fn(),
@@ -11,20 +12,6 @@ vi.mock("@/lib/ai/client", () => ({
 import { POST } from "@/app/api/analyze/route";
 
 const DOCUMENT_TEXT = "The tenant shall pay $1,200 rent on the first of each month.";
-
-/** Builds a fetch-style Response whose body streams a single SSE content delta. */
-function jsonResponse(content: string): Response {
-  const encoder = new TextEncoder();
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const chunk = { choices: [{ delta: { content } }] };
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      controller.close();
-    },
-  });
-  return new Response(body, { status: 200 });
-}
 
 function userMessageContent(callIndex: number): string {
   const args = chatCompletionMock.mock.calls[callIndex]![0] as {
