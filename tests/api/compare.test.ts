@@ -21,13 +21,17 @@ function userMessageContent(callIndex: number): string {
   return args.messages.find((m) => m.role === "user")!.content;
 }
 
-function buildRequest(fields: Record<string, string>, fileB?: { content: string; name: string; type: string }): Request {
+function buildRequest(
+  fields: Record<string, string>,
+  fileB?: { content: string; name: string; type: string },
+  headers?: HeadersInit,
+): Request {
   const formData = new FormData();
   for (const [key, value] of Object.entries(fields)) formData.append(key, value);
   if (fileB) {
     formData.append("fileB", new Blob([fileB.content], { type: fileB.type }), fileB.name);
   }
-  return new Request("http://localhost/api/compare", { method: "POST", body: formData });
+  return new Request("http://localhost/api/compare", { method: "POST", headers, body: formData });
 }
 
 describe("POST /api/compare", () => {
@@ -121,6 +125,27 @@ describe("POST /api/compare", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.documentTextB).toContain("RESIDENTIAL LEASE AGREEMENT");
+  });
+
+  it("returns a cached comparison on a repeat request without calling the model again", async () => {
+    chatCompletionMock.mockResolvedValue(
+      jsonResponse(JSON.stringify({ items: [], summary: "No notable differences." })),
+    );
+    const fields = { documentTextA: `${DOC_A} Case: cache-hit.`, baselineId: "residential-lease-fair" };
+    // A distinct IP: the rate limiter runs before caching, and this file's
+    // other tests already exercise most of the shared "unknown" bucket's budget.
+    const headers = { "x-forwarded-for": "203.0.113.22" };
+
+    const first = await POST(buildRequest(fields, undefined, headers));
+    expect(first.status).toBe(200);
+    expect(chatCompletionMock).toHaveBeenCalledTimes(1);
+
+    const second = await POST(buildRequest(fields, undefined, headers));
+    expect(second.status).toBe(200);
+    expect(chatCompletionMock).toHaveBeenCalledTimes(1);
+
+    const body = await second.json();
+    expect(body.redactions).toEqual([]);
   });
 
   it("returns 400 for an unknown baseline id", async () => {

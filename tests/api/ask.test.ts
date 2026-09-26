@@ -14,10 +14,10 @@ import { POST } from "@/app/api/ask/route";
 const DOCUMENT_TEXT =
   "The tenant shall pay $1,200 rent on the first of each month. Either party may terminate this lease with 60 days written notice.";
 
-function buildRequest(body: Record<string, unknown>): Request {
+function buildRequest(body: Record<string, unknown>, headers?: HeadersInit): Request {
   return new Request("http://localhost/api/ask", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
 }
@@ -168,6 +168,36 @@ describe("POST /api/ask", () => {
     });
     const response = await POST(request);
     expect(response.status).toBe(400);
+  });
+
+  it("includes prior Q&A turns in the prompt when history is provided", async () => {
+    mockChatCompletion({
+      stream: sseResponse("A follow-up answer."),
+      structured: jsonResponse(
+        JSON.stringify({ answerable: true, steps: [], confidence: "low", suggestLawyer: false }),
+      ),
+    });
+
+    await POST(
+      buildRequest(
+        {
+          documentText: DOCUMENT_TEXT,
+          question: "What about after that?",
+          history: [{ question: "What if I pay rent?", answer: "You owe $1,200." }],
+        },
+        // A distinct IP: this file's other tests already exercise most of
+        // the shared "unknown" bucket's budget.
+        { "x-forwarded-for": "203.0.113.30" },
+      ),
+    );
+
+    const streamArgs = chatCompletionMock.mock.calls[0]![0] as {
+      messages: { role: string; content: string }[];
+    };
+    const userMessage = streamArgs.messages.find((m) => m.role === "user")!;
+    expect(userMessage.content).toContain("Earlier in this conversation:");
+    expect(userMessage.content).toContain("Q1: What if I pay rent?");
+    expect(userMessage.content).toContain("A1: You owe $1,200.");
   });
 
   it("redacts PII from the prompt by default and emits a redactions event", async () => {

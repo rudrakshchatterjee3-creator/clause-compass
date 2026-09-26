@@ -90,6 +90,11 @@ describe("buildBriefContents", () => {
     const contents = buildBriefContents({ analysis });
     expect(contents).not.toContain("also asked");
   });
+
+  it("falls back to 'not specified' when no parties were extracted", () => {
+    const contents = buildBriefContents({ analysis: { ...analysis, parties: [] } });
+    expect(contents).toContain("Parties: not specified");
+  });
 });
 
 describe("BRIEF_SYSTEM_PROMPT", () => {

@@ -53,4 +53,11 @@ describe("getClientIp", () => {
     const request = new Request("http://localhost/");
     expect(getClientIp(request)).toBe("unknown");
   });
+
+  it("returns 'unknown' when the first hop is empty", () => {
+    const request = new Request("http://localhost/", {
+      headers: { "x-forwarded-for": ", 10.0.0.1" },
+    });
+    expect(getClientIp(request)).toBe("unknown");
+  });
 });

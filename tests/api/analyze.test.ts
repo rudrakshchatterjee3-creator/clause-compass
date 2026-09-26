@@ -26,6 +26,7 @@ function buildRequest(
     mimeType?: string;
     content?: string;
     redactPii?: boolean;
+    headers?: HeadersInit;
   } = {},
 ): Request {
   const { fileName = "lease.txt", mimeType = "text/plain", content = DOCUMENT_TEXT } = options;
@@ -33,7 +34,11 @@ function buildRequest(
   const blob = new Blob([content], { type: mimeType });
   formData.append("file", blob, fileName);
   if (options.redactPii === false) formData.append("redactPii", "false");
-  return new Request("http://localhost/api/analyze", { method: "POST", body: formData });
+  return new Request("http://localhost/api/analyze", {
+    method: "POST",
+    headers: options.headers,
+    body: formData,
+  });
 }
 
 function validDraft() {
@@ -172,5 +177,44 @@ describe("POST /api/analyze", () => {
 
     const response = await POST(request);
     expect(response.status).toBe(400);
+  });
+
+  it("returns 400 when the request body isn't valid multipart form-data", async () => {
+    // A distinct IP: the rate limiter runs before body parsing, and this
+    // file's other tests already exercise most of the shared "unknown"
+    // bucket's budget.
+    const request = new Request("http://localhost/api/analyze", {
+      method: "POST",
+      headers: {
+        "Content-Type": "multipart/form-data; boundary=not-a-real-boundary",
+        "x-forwarded-for": "203.0.113.20",
+      },
+      body: "this is not multipart-encoded content",
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error.code).toBe("invalid_request");
+    expect(chatCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a cached analysis on a repeat request without calling the model again", async () => {
+    chatCompletionMock.mockResolvedValue(jsonResponse(JSON.stringify(validDraft())));
+    const content = `${DOCUMENT_TEXT} Case: cache-hit.`;
+    // A distinct IP, for the same reason as above.
+    const options = { content, headers: { "x-forwarded-for": "203.0.113.21" } };
+
+    const first = await POST(buildRequest(options));
+    expect(first.status).toBe(200);
+    expect(chatCompletionMock).toHaveBeenCalledTimes(1);
+
+    const second = await POST(buildRequest(options));
+    expect(second.status).toBe(200);
+    expect(chatCompletionMock).toHaveBeenCalledTimes(1);
+
+    const body = await second.json();
+    expect(body.analysis.clauses).toHaveLength(1);
+    expect(body.redactions).toEqual([]);
   });
 });

@@ -35,6 +35,19 @@ describe("createIdleTimeoutController", () => {
     timers.clear();
   });
 
+  it("eventually aborts on its own reset deadline after resetIdle()", async () => {
+    vi.useFakeTimers();
+    const timers = createIdleTimeoutController(1_000, 10_000);
+
+    await vi.advanceTimersByTimeAsync(900);
+    timers.resetIdle();
+    // The reset idle timer fires 1000ms after resetIdle(), not after the
+    // original deadline.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(timers.signal.aborted).toBe(true);
+    timers.clear();
+  });
+
   it("aborts at maxMs even with continuous resetIdle() calls", async () => {
     vi.useFakeTimers();
     const timers = createIdleTimeoutController(1_000, 3_000);

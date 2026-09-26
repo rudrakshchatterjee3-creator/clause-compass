@@ -80,6 +80,12 @@ describe("locateQuote", () => {
     expect(location).toBeNull();
   });
 
+  it("returns null when the first segment of an ellipsis quote isn't found", () => {
+    const source = "The lease begins on the first day of the month.";
+    const location = locateQuote(source, "nonexistent phrase ... first day");
+    expect(location).toBeNull();
+  });
+
   it("resolves a quote with a trailing ellipsis and no second segment", () => {
     const source = "The tenant shall pay rent on the first of each month.";
     const location = locateQuote(source, "pay rent on the first ...");

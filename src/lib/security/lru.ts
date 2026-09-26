@@ -38,10 +38,10 @@ export class LruCache<K, V> {
     this.store.delete(key);
 
     if (this.store.size >= this.capacity) {
-      const oldestKey = this.store.keys().next().value;
-      if (oldestKey !== undefined) {
-        this.store.delete(oldestKey);
-      }
+      // Guaranteed defined: capacity > 0 (enforced in the constructor) and
+      // size >= capacity together mean the map is non-empty here.
+      const oldestKey = this.store.keys().next().value!;
+      this.store.delete(oldestKey);
     }
 
     this.store.set(key, { value, expiresAt: Date.now() + this.ttlMs });
