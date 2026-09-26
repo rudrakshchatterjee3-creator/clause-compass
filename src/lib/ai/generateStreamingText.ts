@@ -1,6 +1,5 @@
 import "server-only";
-import { getAiClient } from "./client";
-import { AiError } from "./generateStructured";
+import { AiError, openCompletionStream } from "./generateStructured";
 import { readSseData } from "./sse";
 import { createIdleTimeoutController } from "./idleTimeout";
 
@@ -13,6 +12,8 @@ const MAX_TOTAL_MS = 90_000;
 export interface GenerateStreamingTextOptions {
   prompt: string;
   systemInstruction: string;
+  /** Completion-token budget; defaults to the client's generous default. */
+  maxTokens?: number;
 }
 
 interface ChatCompletionChunk {
@@ -23,25 +24,25 @@ interface ChatCompletionChunk {
 export async function* generateStreamingText({
   prompt,
   systemInstruction,
+  maxTokens,
 }: GenerateStreamingTextOptions): AsyncGenerator<string> {
-  const client = getAiClient();
   const timers = createIdleTimeoutController(IDLE_TIMEOUT_MS, MAX_TOTAL_MS);
 
   try {
-    const response = await client.chatCompletion({
-      messages: [
-        { role: "system", content: systemInstruction },
-        { role: "user", content: prompt },
-      ],
-      stream: true,
-      signal: timers.signal,
-    });
+    const body = await openCompletionStream(
+      {
+        messages: [
+          { role: "system", content: systemInstruction },
+          { role: "user", content: prompt },
+        ],
+        stream: true,
+        maxTokens,
+        signal: timers.signal,
+      },
+      () => timers.resetIdle(),
+    );
 
-    if (!response.ok || !response.body) {
-      throw new AiError("request_failed", `Model request failed with status ${response.status}`);
-    }
-
-    for await (const payload of readSseData(response.body)) {
+    for await (const payload of readSseData(body)) {
       timers.resetIdle();
       const chunk = JSON.parse(payload) as ChatCompletionChunk;
       const text = chunk.choices?.[0]?.delta?.content;

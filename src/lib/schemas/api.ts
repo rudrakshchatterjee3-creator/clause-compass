@@ -3,6 +3,8 @@ import { clauseSchema } from "./clause";
 import { analysisSchema } from "./analysis";
 import { mimeTypeSchema } from "./mime";
 import { askAnswerSchema } from "./askAnswer";
+import { comparisonSchema } from "./comparison";
+import { briefSchema } from "./brief";
 
 export const apiErrorSchema = z.object({
   error: z.object({
@@ -81,3 +83,25 @@ export const briefRequestSchema = z.object({
   qaHistory: z.array(qaTurnSchema).optional(),
 });
 export type BriefRequest = z.infer<typeof briefRequestSchema>;
+
+// Success-response bodies, validated on the client before they reach state.
+export const analyzeResponseSchema = z.object({
+  analysis: analysisSchema,
+  documentText: z.string(),
+  redactions: z.array(redactionSummarySchema),
+});
+export type AnalyzeResponse = z.infer<typeof analyzeResponseSchema>;
+
+export const compareResponseSchema = z.object({
+  comparison: comparisonSchema,
+  documentTextA: z.string(),
+  documentTextB: z.string(),
+  redactions: z.array(redactionSummarySchema),
+});
+export type CompareResponse = z.infer<typeof compareResponseSchema>;
+
+export const briefResponseSchema = z.object({
+  brief: briefSchema,
+  generatedAt: z.string(),
+});
+export type BriefResponse = z.infer<typeof briefResponseSchema>;

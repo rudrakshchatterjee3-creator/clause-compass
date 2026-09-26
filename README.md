@@ -191,7 +191,7 @@ mix-up gets caught rather than silently passing.
 - **Unit/integration (Vitest):** the entire pure core — schemas, text extraction, grounding,
   redaction, rate limiting, the Groq client wrapper, and every API route with the model call
   mocked (valid response, invalid-then-retry, total failure, oversized input, wrong MIME type,
-  and the cross-document grounding check). ~200 tests, run with `npm run test`.
+  and the cross-document grounding check). 230+ tests, run with `npm run test`.
 - **End-to-end (Playwright):** full user flows — upload → clause list → click-to-highlight in
   both directions; ask a question → cited answer; compare against a baseline; generate a brief —
   with `/api/*` mocked via route interception, so e2e runs need no real Groq key. Includes the
@@ -218,8 +218,8 @@ npm run dev
 ## Deploy (Google Cloud Run)
 
 ```bash
-gcloud secrets create gemini-api-key --replication-policy=automatic
-printf '%s' 'your-real-key' | gcloud secrets versions add gemini-api-key --data-file=-
+gcloud secrets create groq-api-key --replication-policy=automatic
+printf '%s' 'your-real-key' | gcloud secrets versions add groq-api-key --data-file=-
 
 PROJECT_ID=your-project REGION=us-central1 ./scripts/deploy.sh
 ```
@@ -237,6 +237,9 @@ variable.
 - The in-memory rate limiter and cache are per-instance; they reset on redeploy and don't
   coordinate across multiple running instances.
 - No OCR: a scanned (image-only) PDF with no text layer will extract as empty and be rejected.
+- On Groq's free tier the model has a per-minute token budget. When it's exhausted the server
+  waits out a short provider-requested pause and retries once, so rapid use may just take a few
+  extra seconds; a longer pause surfaces a clear "AI service is busy" message instead.
 - This is a hackathon-scope project. It has not been audited by a lawyer, and clause type
   detection and risk framing reflect the training and judgment of a general-purpose language
   model, not jurisdiction-specific legal expertise.

@@ -4,8 +4,18 @@ import { env } from "@/lib/env";
 const GROQ_CHAT_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 // Groq validates json_object responses server-side and rejects a truncated
-// generation outright, so every call gets a generous completion budget.
-const MAX_COMPLETION_TOKENS = 8000;
+// generation outright, so the default budget is generous enough for a full
+// clause map. Calls with small outputs pass a lower `maxTokens`, since the
+// reserved budget counts against the provider's per-minute token limit.
+export const DEFAULT_MAX_COMPLETION_TOKENS = 8000;
+
+// gpt-oss models spend tokens on hidden reasoning before answering. Low effort
+// cuts that to a few dozen tokens with no loss of structured-output quality
+// here (measured on the sample lease: ~2s, full clause map), which matters on
+// a free-tier per-minute token budget. Other models may reject the parameter.
+function reasoningParams(model: string): { reasoning_effort?: "low" } {
+  return model.startsWith("openai/gpt-oss") ? { reasoning_effort: "low" } : {};
+}
 
 export interface ChatMessage {
   role: "system" | "user";
@@ -16,6 +26,7 @@ export interface ChatCompletionRequest {
   messages: ChatMessage[];
   stream?: boolean;
   jsonMode?: boolean;
+  maxTokens?: number;
   signal?: AbortSignal;
 }
 
@@ -29,7 +40,7 @@ let client: AiClient | undefined;
 export function getAiClient(): AiClient {
   if (!client) {
     client = {
-      chatCompletion({ messages, stream, jsonMode, signal }) {
+      chatCompletion({ messages, stream, jsonMode, maxTokens, signal }) {
         return fetch(GROQ_CHAT_COMPLETIONS_URL, {
           method: "POST",
           headers: {
@@ -40,7 +51,8 @@ export function getAiClient(): AiClient {
             model: env.GROQ_MODEL,
             messages,
             stream: stream ?? false,
-            max_completion_tokens: MAX_COMPLETION_TOKENS,
+            max_completion_tokens: maxTokens ?? DEFAULT_MAX_COMPLETION_TOKENS,
+            ...reasoningParams(env.GROQ_MODEL),
             ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
           }),
           signal,

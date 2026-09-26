@@ -48,6 +48,14 @@ describe("generateStreamingText", () => {
     ).rejects.toMatchObject({ code: "request_failed" });
   });
 
+  it("throws rate_limited when the provider returns 429", async () => {
+    chatCompletionMock.mockResolvedValue(new Response(null, { status: 429 }));
+
+    await expect(
+      collect(generateStreamingText({ prompt: "p", systemInstruction: "s" })),
+    ).rejects.toMatchObject({ code: "rate_limited" });
+  });
+
   it("throws request_failed when the response status is not ok", async () => {
     chatCompletionMock.mockResolvedValue(new Response(null, { status: 500 }));
 

@@ -26,7 +26,7 @@ src/
     api/brief/         # POST: lawyer-prep brief
   components/          # UI, one component per file
   lib/
-    ai/                # gemini client, prompts, generateStructured()
+    ai/                # Groq client, prompts, generateStructured()
     parsing/           # file -> text, clause segmentation helpers
     grounding/         # citation verification
     schemas/           # zod schemas + inferred types

@@ -84,7 +84,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch (error) {
     if (error instanceof AiError) {
       logRouteError({ route: ROUTE, code: error.code, status: aiErrorStatus(error.code) }, error);
-      return errorResponse(error.code, error.message, aiErrorStatus(error.code));
+      return errorResponse(
+        error.code,
+        error.message,
+        aiErrorStatus(error.code),
+        error.retryAfterSeconds,
+      );
     }
     logRouteError({ route: ROUTE, code: "internal_error", status: 500 }, error);
     return errorResponse("internal_error", "Failed to analyze the document", 500);

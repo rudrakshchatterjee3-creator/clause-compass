@@ -20,6 +20,8 @@ export function aiErrorStatus(code: AiError["code"]): number {
   switch (code) {
     case "timeout":
       return 504;
+    case "rate_limited":
+      return 429;
     case "invalid_response":
     case "request_failed":
       return 502;

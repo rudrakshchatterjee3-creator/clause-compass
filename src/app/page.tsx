@@ -16,7 +16,17 @@ import { PiiToggle } from "@/components/PiiToggle";
 import { RedactionNotice } from "@/components/RedactionNotice";
 import { TabList, tabButtonId, tabPanelId, type TabItem } from "@/components/Tabs";
 import type { ApiErrorInfo, AskTurn, RedactionSummaryDto } from "@/components/askTypes";
-import type { AskStreamEvent } from "@/lib/schemas/api";
+import {
+  analyzeResponseSchema,
+  askStreamEventSchema,
+  briefResponseSchema,
+  compareResponseSchema,
+} from "@/lib/schemas/api";
+import {
+  INVALID_RESPONSE_ERROR,
+  readApiError,
+  readApiResponse,
+} from "@/lib/api/readApiResponse";
 import { parseNdjsonStream } from "@/lib/streaming/ndjson";
 import type { Analysis, Brief, ClauseType, Comparison, RiskLevel } from "@/lib/schemas";
 
@@ -256,24 +266,18 @@ async function submitFile(file: File, redactPii: boolean, dispatch: Dispatch<App
 
   try {
     const response = await fetch("/api/analyze", { method: "POST", body: formData });
-    const body = await response.json();
+    const result = await readApiResponse(response, analyzeResponseSchema);
 
-    if (!response.ok) {
-      dispatch({
-        type: "UPLOAD_ERROR",
-        error: body?.error ?? {
-          code: "unknown",
-          message: "Something went wrong. Please try again.",
-        },
-      });
+    if (!result.ok) {
+      dispatch({ type: "UPLOAD_ERROR", error: result.error });
       return;
     }
 
     dispatch({
       type: "UPLOAD_SUCCESS",
-      analysis: body.analysis,
-      documentText: body.documentText,
-      redactions: body.redactions ?? [],
+      analysis: result.data.analysis,
+      documentText: result.data.documentText,
+      redactions: result.data.redactions,
     });
   } catch {
     dispatch({
@@ -311,17 +315,17 @@ async function submitQuestion(
     });
 
     if (!response.ok || !response.body) {
-      const body = await response.json().catch(() => null);
-      dispatch({
-        type: "ASK_ERROR",
-        id,
-        error: body?.error ?? { code: "unknown", message: "Something went wrong. Please try again." },
-      });
+      dispatch({ type: "ASK_ERROR", id, error: await readApiError(response) });
       return;
     }
 
     for await (const raw of parseNdjsonStream(response.body)) {
-      const event = raw as AskStreamEvent;
+      const parsed = askStreamEventSchema.safeParse(raw);
+      if (!parsed.success) {
+        dispatch({ type: "ASK_ERROR", id, error: INVALID_RESPONSE_ERROR });
+        return;
+      }
+      const event = parsed.data;
       if (event.type === "answer_chunk") {
         dispatch({ type: "ASK_CHUNK", id, text: event.text });
       } else if (event.type === "result") {
@@ -367,23 +371,17 @@ async function submitCompare(
 
   try {
     const response = await fetch("/api/compare", { method: "POST", body: formData });
-    const body = await response.json();
+    const result = await readApiResponse(response, compareResponseSchema);
 
-    if (!response.ok) {
-      dispatch({
-        type: "COMPARE_ERROR",
-        error: body?.error ?? {
-          code: "unknown",
-          message: "Something went wrong. Please try again.",
-        },
-      });
+    if (!result.ok) {
+      dispatch({ type: "COMPARE_ERROR", error: result.error });
       return;
     }
 
     dispatch({
       type: "COMPARE_SUCCESS",
-      comparison: body.comparison,
-      redactions: body.redactions ?? [],
+      comparison: result.data.comparison,
+      redactions: result.data.redactions,
     });
   } catch {
     dispatch({
@@ -408,20 +406,18 @@ async function submitBrief(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ analysis: params.analysis, qaHistory: params.qaHistory }),
     });
-    const body = await response.json();
+    const result = await readApiResponse(response, briefResponseSchema);
 
-    if (!response.ok) {
-      dispatch({
-        type: "BRIEF_ERROR",
-        error: body?.error ?? {
-          code: "unknown",
-          message: "Something went wrong. Please try again.",
-        },
-      });
+    if (!result.ok) {
+      dispatch({ type: "BRIEF_ERROR", error: result.error });
       return;
     }
 
-    dispatch({ type: "BRIEF_SUCCESS", brief: body.brief, generatedAt: body.generatedAt });
+    dispatch({
+      type: "BRIEF_SUCCESS",
+      brief: result.data.brief,
+      generatedAt: result.data.generatedAt,
+    });
   } catch {
     dispatch({
       type: "BRIEF_ERROR",

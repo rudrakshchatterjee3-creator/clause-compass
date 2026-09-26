@@ -93,6 +93,65 @@ describe("generateStructured", () => {
     expect(chatCompletionMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each([429, 413])(
+    "throws a rate_limited error without retrying when the provider returns %i",
+    async (status) => {
+      chatCompletionMock.mockResolvedValue(sseResponse("ignored", status));
+
+      await expect(
+        generateStructured({ schema, prompt: "prompt", systemInstruction: "system" }),
+      ).rejects.toMatchObject({ code: "rate_limited" });
+      expect(chatCompletionMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("waits out a short provider rate limit and retries once", async () => {
+    vi.useFakeTimers();
+    chatCompletionMock
+      .mockResolvedValueOnce(new Response(null, { status: 429, headers: { "retry-after": "2" } }))
+      .mockResolvedValueOnce(sseResponse(JSON.stringify({ answer: "after wait" })));
+
+    const promise = generateStructured({ schema, prompt: "p", systemInstruction: "s" });
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    await expect(promise).resolves.toEqual({ answer: "after wait" });
+    expect(chatCompletionMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces rate_limited with retryAfterSeconds when the wait is too long to absorb", async () => {
+    chatCompletionMock.mockResolvedValue(
+      new Response(null, { status: 429, headers: { "retry-after": "45" } }),
+    );
+
+    await expect(
+      generateStructured({ schema, prompt: "p", systemInstruction: "s" }),
+    ).rejects.toMatchObject({ code: "rate_limited", retryAfterSeconds: 45 });
+    expect(chatCompletionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up after one retry if the provider is still rate limiting", async () => {
+    vi.useFakeTimers();
+    chatCompletionMock.mockImplementation(
+      async () => new Response(null, { status: 429, headers: { "retry-after": "1" } }),
+    );
+
+    const promise = generateStructured({ schema, prompt: "p", systemInstruction: "s" });
+    const assertion = expect(promise).rejects.toMatchObject({ code: "rate_limited" });
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await assertion;
+    expect(chatCompletionMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("forwards a custom maxTokens budget to the client", async () => {
+    chatCompletionMock.mockResolvedValue(sseResponse(JSON.stringify({ answer: "hi" })));
+
+    await generateStructured({ schema, prompt: "p", systemInstruction: "s", maxTokens: 1234 });
+
+    const callArgs = chatCompletionMock.mock.calls[0]![0] as { maxTokens?: number };
+    expect(callArgs.maxTokens).toBe(1234);
+  });
+
   it("throws request_failed when the response status is not ok", async () => {
     chatCompletionMock.mockResolvedValue(sseResponse("ignored", 500));
 

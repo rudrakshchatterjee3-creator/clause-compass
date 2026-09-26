@@ -15,6 +15,8 @@ import { logRouteError } from "@/lib/security/logger";
 import { errorResponse, aiErrorStatus } from "@/lib/api/response";
 
 const ROUTE = "ask";
+// A short answer and a handful of cited steps — far below the default budget.
+const ASK_MAX_TOKENS = 4000;
 const rateLimiter = new RateLimiter({ limit: 10, windowMs: 60_000 });
 
 export async function POST(request: Request): Promise<Response> {
@@ -64,6 +66,7 @@ export async function POST(request: Request): Promise<Response> {
         for await (const chunk of generateStreamingText({
           prompt: contents,
           systemInstruction: ASK_ANSWER_SYSTEM_PROMPT,
+          maxTokens: ASK_MAX_TOKENS,
         })) {
           answer += chunk;
           emit({ type: "answer_chunk", text: chunk });
@@ -77,6 +80,7 @@ export async function POST(request: Request): Promise<Response> {
           schema: askDetailDraftSchema,
           prompt: contents,
           systemInstruction: buildAskDetailSystemPrompt(answer),
+          maxTokens: ASK_MAX_TOKENS,
         });
 
         const steps: AskStep[] = verifyQuoteFields(documentText, detail.steps);

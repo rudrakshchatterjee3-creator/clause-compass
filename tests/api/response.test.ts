@@ -27,6 +27,10 @@ describe("aiErrorStatus", () => {
   it("maps request_failed to 502", () => {
     expect(aiErrorStatus("request_failed")).toBe(502);
   });
+
+  it("maps rate_limited to 429", () => {
+    expect(aiErrorStatus("rate_limited")).toBe(429);
+  });
 });
 
 describe("extractTextStatus", () => {
